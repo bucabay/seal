@@ -135,8 +135,16 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() == 1 {
-        seal_lib::run();
-        return;
+        #[cfg(feature = "gui")]
+        {
+            seal_lib::run();
+            return;
+        }
+        #[cfg(not(feature = "gui"))]
+        {
+            print_usage();
+            return;
+        }
     }
 
     let mut default_account = std::env::var("SEAL_ACCOUNT")

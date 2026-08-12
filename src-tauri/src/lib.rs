@@ -1,3 +1,5 @@
+#![cfg(feature = "gui")]
+
 use keyring::Entry;
 use serde::Serialize;
 use std::collections::BTreeMap;

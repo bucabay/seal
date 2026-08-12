@@ -7,8 +7,6 @@ class Seal < Formula
   head "https://github.com/bucabay/seal.git", branch: "main"
 
   depends_on "rust" => :build
-  depends_on "node" => :build
-  depends_on "pnpm" => :build
 
   on_linux do
     depends_on "dbus"
@@ -16,24 +14,17 @@ class Seal < Formula
   end
 
   def install
-    # Build frontend (required by tauri::generate_context! at compile time)
-    system "pnpm", "install"
-    system "pnpm", "build"
+    # CLI-only build: no Tauri/GUI/frontend, no C compilation.
+    # The GUI is distributed separately (see --cask, once published).
+    system "cargo", "build",
+           "--manifest-path", "src-tauri/Cargo.toml",
+           "--no-default-features",
+           "--release"
 
-    # Build the Rust binary
-    system "cargo", "build", "--manifest-path", "src-tauri/Cargo.toml", "--release"
-
-    # Install the `seal` binary
     bin.install "src-tauri/target/release/seal"
 
     # Install the agent skill
     (share/"seal/skills/seal").install "skills/seal/SKILL.md"
-
-    # Install GUI app bundle on macOS
-    if OS.mac?
-      app_path = "src-tauri/target/release/bundle/macos/Seal.app"
-      prefix.install app_path if File.exist?(app_path)
-    end
   end
 
   def caveats

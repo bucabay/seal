@@ -11,9 +11,13 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 name = "seal"
 path = "src/main.rs"
 
+[features]
+default = ["gui"]
+gui = ["dep:tauri", "dep:tauri-plugin-shell", "dep:tauri-build"]
+
 [dependencies]
-tauri = { version = "2", features = [] }
-tauri-plugin-shell = "2"
+tauri = { version = "2", features = [], optional = true }
+tauri-plugin-shell = { version = "2", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 keyring = "3"
@@ -29,4 +33,4 @@ keyring = { version = "3", features = ["windows-native"] }
 keyring = { version = "3", features = ["linux-native-sync-persistent"] }
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2", features = [], optional = true }
