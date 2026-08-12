@@ -1,8 +1,8 @@
 class Seal < Formula
   desc "Cross-platform secrets manager (CLI + GUI) backed by the OS keychain"
   homepage "https://github.com/bucabay/seal"
-  url "https://github.com/bucabay/seal/archive/refs/tags/v0.1.1.tar.gz"
-  sha256 "9d4727818214319b78693cc4fc0500e1e555f72d93bf7f242b7ce091ea94ef3f"
+  url "https://github.com/bucabay/seal/archive/refs/tags/v0.1.2.tar.gz"
+  sha256 "2557872f1eb46b9a85b4a75d25df659b9e2b3f19bdbc90a7d50f4d55adc69b1a"
   license "MIT"
   head "https://github.com/bucabay/seal.git", branch: "main"
 
