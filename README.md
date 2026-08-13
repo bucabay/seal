@@ -1,7 +1,7 @@
 # Seal
 
 Cross-platform secrets manager. A small CLI + GUI backed by your operating
-system's native keychain — no new secrets file to protect, no sync to trust.
+system's native keychain — no secrets file to protect, no sync to trust.
 
 | OS | Backend |
 |---|---|
@@ -9,26 +9,39 @@ system's native keychain — no new secrets file to protect, no sync to trust.
 | Linux | Secret Service (GNOME Keyring / KDE Wallet) |
 | Windows | Credential Manager |
 
+## Features
+
+- **CLI** — `seal set/get/delete/list` for scripting and terminal use
+- **GUI** — Tauri app (macOS / Windows / Linux) with a vault selector, secret
+  list, reveal/copy/delete, dark & light themes
+- **Vaults** — group secrets by project (`hardroad/db_pass` = vault `hardroad`,
+  key `db_pass`)
+- **Zero-trust storage** — secrets live only in the OS keychain; nothing
+  sensitive is written to disk
+- **Agent skill** — ships with a Claude Code / opencode skill that encodes the
+  safety contract for AI agents (never print secrets, never write them to files)
+
 ## Install
 
-### Homebrew (macOS / Linux)
+### Homebrew (macOS / Linux) — CLI
 
 ```sh
 brew install bucabay/tap/seal
 ```
 
+### GitHub Releases — GUI app
+
+Download the `.dmg` (macOS), `.msi`/`.exe` (Windows), or `.deb`/`.AppImage`
+(Linux) from the [latest release](https://github.com/bucabay/seal/releases).
+
+> macOS builds are unsigned — if Gatekeeper blocks the app, right-click → Open,
+> or run `xattr -dr com.apple.quarantine /Applications/Seal.app`.
+
 ### From source
 
 ```sh
-./install.sh        # builds and symlinks `seal` into your PATH
-```
-
-### Dev
-
-```sh
-pnpm install
-pnpm tauri dev       # GUI
-cargo run --manifest-path src-tauri/Cargo.toml -- set KEY VALUE   # CLI
+./install.sh        # builds and symlinks the `seal` CLI + installs the agent skill
+pnpm tauri dev      # run the GUI in dev mode
 ```
 
 ## CLI
@@ -57,12 +70,25 @@ The skill encodes the safety contract for agents: never print a secret value,
 never write secrets to files, and consume via `seal get` inline
 (`export TOKEN="$(seal get project/key)"`).
 
-## Architecture
+## Documentation
 
-- **Rust core** (`src-tauri/src/`): `keyring` crate abstracts the three OS
-  keychains behind one `Entry::new("seal", "vault:key")` API.
-- **`main.rs`**: CLI parser (no deps — hand-rolled arg parsing).
-- **`lib.rs`**: Tauri command handlers shared with the GUI.
-- **Index**: keys are listed from `~/.config/seal/index.json` (or
-  `%APPDATA%\seal\index.json`), because keychain APIs can't enumerate. Secrets
-  themselves live only in the keychain.
+- [Architecture](docs/ARCHITECTURE.md) — components, storage model, data flow
+- [Design decisions](docs/DECISIONS.md) — rationale for every major choice
+- [Design system](docs/DESIGN.md) — UI framework, theming, typography
+
+## Development
+
+```sh
+pnpm install
+pnpm tauri dev                                  # GUI
+cargo run --manifest-path src-tauri/Cargo.toml -- set KEY VALUE   # CLI
+cargo build --manifest-path src-tauri/Cargo.toml --no-default-features   # CLI-only (no Tauri)
+pnpm build                                      # type-check + build frontend
+```
+
+Releases are built by [`.github/workflows/release.yml`](.github/workflows/release.yml)
+on every `v*` tag, producing installers for all three platforms.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
