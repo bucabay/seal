@@ -1,0 +1,104 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* shadcn tokens — light */
+    --background: 0 0% 100%;
+    --foreground: 0 0% 9%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 9%;
+    --primary: 25 92% 54%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 25 40% 96%;
+    --secondary-foreground: 0 0% 9%;
+    --muted: 25 40% 96%;
+    --muted-foreground: 0 0% 40%;
+    --accent: 217 91% 58%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 25 15% 91%;
+    --input: 25 15% 91%;
+    --ring: 25 92% 54%;
+    --radius: 0rem;
+
+    /* landing tokens — light */
+    --ink: #171717;
+    --ink-soft: #525252;
+    --brand: #f38020;
+    --brand-deep: #d46917;
+    --line: #e7e5e4;
+    --line-strong: #d6d3d1;
+    --surface: #fafaf9;
+    --surface-tint: #fef7f1;
+    --dot: rgba(243, 128, 32, 0.18);
+  }
+
+  .dark {
+    --background: 0 0% 5%;
+    --foreground: 0 0% 93%;
+    --card: 0 0% 7%;
+    --card-foreground: 0 0% 93%;
+    --popover: 0 0% 7%;
+    --popover-foreground: 0 0% 93%;
+    --primary: 217 91% 58%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 217 18% 12%;
+    --secondary-foreground: 0 0% 93%;
+    --muted: 217 18% 12%;
+    --muted-foreground: 215 10% 58%;
+    --accent: 25 92% 54%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 62.8% 40%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 217 12% 16%;
+    --input: 217 12% 16%;
+    --ring: 217 91% 58%;
+
+    --ink: #ededed;
+    --ink-soft: #8a8a8a;
+    --brand: #3b82f6;
+    --brand-deep: #60a5fa;
+    --line: #1e2430;
+    --line-strong: #2d3648;
+    --surface: #0f0f0f;
+    --surface-tint: #0f1520;
+    --dot: rgba(59, 130, 246, 0.18);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-line;
+  }
+
+  body {
+    @apply bg-background text-ink antialiased;
+    font-feature-settings: "ss01" on, "cv01" on;
+  }
+
+  ::selection {
+    background: var(--brand);
+    color: #fff;
+  }
+}
+
+@layer components {
+  .frame {
+    @apply mx-auto w-full max-w-[1100px] border-x border-line;
+  }
+
+  .eyebrow {
+    @apply font-mono text-[11px] uppercase tracking-[0.18em] text-ink-soft;
+  }
+
+  .dotfield {
+    background-image: radial-gradient(var(--dot) 1px, transparent 1px);
+    background-size: 16px 16px;
+    background-position: 0 0;
+  }
+}

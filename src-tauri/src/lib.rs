@@ -99,6 +99,32 @@ fn list_secrets(account: Option<String>) -> Result<Vec<SecretEntry>, String> {
         .collect())
 }
 
+#[tauri::command]
+fn list_accounts() -> Result<Vec<String>, String> {
+    let index = read_index();
+    let mut accounts: Vec<String> = index.keys().cloned().collect();
+    accounts.sort();
+    if !accounts.contains(&DEFAULT_ACCOUNT.to_string()) {
+        accounts.insert(0, DEFAULT_ACCOUNT.to_string());
+    }
+    Ok(accounts)
+}
+
+#[tauri::command]
+fn add_account(account: String) -> Result<Vec<String>, String> {
+    let account = account.trim().to_string();
+    if account.is_empty() {
+        return Err("Account name cannot be empty".to_string());
+    }
+    if account.contains('/') {
+        return Err("Account name cannot contain '/'".to_string());
+    }
+    let mut index = read_index();
+    index.entry(account.clone()).or_default();
+    write_index(&index);
+    list_accounts()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -108,6 +134,8 @@ pub fn run() {
             get_secret,
             delete_secret,
             list_secrets,
+            list_accounts,
+            add_account,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
