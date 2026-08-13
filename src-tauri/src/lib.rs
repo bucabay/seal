@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
-const DEFAULT_ACCOUNT: &str = "seal";
+const DEFAULT_VAULT: &str = "seal";
 
 fn index_path() -> PathBuf {
     let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
@@ -34,95 +34,95 @@ fn write_index(index: &BTreeMap<String, Vec<String>>) {
 #[derive(Serialize)]
 struct SecretEntry {
     key: String,
-    account: String,
+    vault: String,
 }
 
 #[tauri::command]
-fn save_secret(key: String, value: String, account: Option<String>) -> Result<String, String> {
-    let account = account.unwrap_or_else(|| DEFAULT_ACCOUNT.to_string());
-    let entry = Entry::new("seal", &format!("{}:{}", account, key))
+fn save_secret(key: String, value: String, vault: Option<String>) -> Result<String, String> {
+    let vault = vault.unwrap_or_else(|| DEFAULT_VAULT.to_string());
+    let entry = Entry::new("seal", &format!("{}:{}", vault, key))
         .map_err(|e| format!("Keyring error: {}", e))?;
     entry
         .set_password(&value)
         .map_err(|e| format!("Keyring error: {}", e))?;
 
     let mut index = read_index();
-    let keys = index.entry(account.clone()).or_default();
+    let keys = index.entry(vault.clone()).or_default();
     if !keys.contains(&key) {
         keys.push(key.clone());
         keys.sort();
     }
     write_index(&index);
 
-    Ok(format!("Saved {}:{}", account, key))
+    Ok(format!("Saved {}:{}", vault, key))
 }
 
 #[tauri::command]
-fn get_secret(key: String, account: Option<String>) -> Result<String, String> {
-    let account = account.unwrap_or_else(|| DEFAULT_ACCOUNT.to_string());
-    let entry = Entry::new("seal", &format!("{}:{}", account, key))
+fn get_secret(key: String, vault: Option<String>) -> Result<String, String> {
+    let vault = vault.unwrap_or_else(|| DEFAULT_VAULT.to_string());
+    let entry = Entry::new("seal", &format!("{}:{}", vault, key))
         .map_err(|e| format!("Keyring error: {}", e))?;
     entry
         .get_password()
-        .map_err(|e| format!("Not found: {}:{} ({})", account, key, e))
+        .map_err(|e| format!("Not found: {}:{} ({})", vault, key, e))
 }
 
 #[tauri::command]
-fn delete_secret(key: String, account: Option<String>) -> Result<String, String> {
-    let account = account.unwrap_or_else(|| DEFAULT_ACCOUNT.to_string());
-    let entry = Entry::new("seal", &format!("{}:{}", account, key))
+fn delete_secret(key: String, vault: Option<String>) -> Result<String, String> {
+    let vault = vault.unwrap_or_else(|| DEFAULT_VAULT.to_string());
+    let entry = Entry::new("seal", &format!("{}:{}", vault, key))
         .map_err(|e| format!("Keyring error: {}", e))?;
     entry
         .delete_credential()
-        .map_err(|e| format!("Not found: {}:{} ({})", account, key, e))?;
+        .map_err(|e| format!("Not found: {}:{} ({})", vault, key, e))?;
 
     let mut index = read_index();
-    if let Some(keys) = index.get_mut(&account) {
+    if let Some(keys) = index.get_mut(&vault) {
         keys.retain(|k| k != &key);
     }
     write_index(&index);
 
-    Ok(format!("Deleted {}:{}", account, key))
+    Ok(format!("Deleted {}:{}", vault, key))
 }
 
 #[tauri::command]
-fn list_secrets(account: Option<String>) -> Result<Vec<SecretEntry>, String> {
-    let account = account.unwrap_or_else(|| DEFAULT_ACCOUNT.to_string());
+fn list_secrets(vault: Option<String>) -> Result<Vec<SecretEntry>, String> {
+    let vault = vault.unwrap_or_else(|| DEFAULT_VAULT.to_string());
     let index = read_index();
-    let keys = index.get(&account).cloned().unwrap_or_default();
+    let keys = index.get(&vault).cloned().unwrap_or_default();
     Ok(keys
         .into_iter()
         .map(|key| SecretEntry {
             key,
-            account: account.clone(),
+            vault: vault.clone(),
         })
         .collect())
 }
 
 #[tauri::command]
-fn list_accounts() -> Result<Vec<String>, String> {
+fn list_vaults() -> Result<Vec<String>, String> {
     let index = read_index();
-    let mut accounts: Vec<String> = index.keys().cloned().collect();
-    accounts.sort();
-    if !accounts.contains(&DEFAULT_ACCOUNT.to_string()) {
-        accounts.insert(0, DEFAULT_ACCOUNT.to_string());
+    let mut vaults: Vec<String> = index.keys().cloned().collect();
+    vaults.sort();
+    if !vaults.contains(&DEFAULT_VAULT.to_string()) {
+        vaults.insert(0, DEFAULT_VAULT.to_string());
     }
-    Ok(accounts)
+    Ok(vaults)
 }
 
 #[tauri::command]
-fn add_account(account: String) -> Result<Vec<String>, String> {
-    let account = account.trim().to_string();
-    if account.is_empty() {
-        return Err("Account name cannot be empty".to_string());
+fn add_vault(vault: String) -> Result<Vec<String>, String> {
+    let vault = vault.trim().to_string();
+    if vault.is_empty() {
+        return Err("Vault name cannot be empty".to_string());
     }
-    if account.contains('/') {
-        return Err("Account name cannot contain '/'".to_string());
+    if vault.contains('/') {
+        return Err("Vault name cannot contain '/'".to_string());
     }
     let mut index = read_index();
-    index.entry(account.clone()).or_default();
+    index.entry(vault.clone()).or_default();
     write_index(&index);
-    list_accounts()
+    list_vaults()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -134,8 +134,8 @@ pub fn run() {
             get_secret,
             delete_secret,
             list_secrets,
-            list_accounts,
-            add_account,
+            list_vaults,
+            add_vault,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

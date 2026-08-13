@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
-const DEFAULT_ACCOUNT: &str = "seal";
+const DEFAULT_VAULT: &str = "seal";
 
 fn index_path() -> PathBuf {
     let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
@@ -28,17 +28,17 @@ fn write_index(index: &BTreeMap<String, Vec<String>>) {
     fs::write(&path, data).ok();
 }
 
-fn parse_key(raw: &str, default_account: &str) -> (String, String) {
-    if let Some((account, key)) = raw.split_once('/') {
-        (account.to_string(), key.to_string())
+fn parse_key(raw: &str, default_vault: &str) -> (String, String) {
+    if let Some((vault, key)) = raw.split_once('/') {
+        (vault.to_string(), key.to_string())
     } else {
-        (default_account.to_string(), raw.to_string())
+        (default_vault.to_string(), raw.to_string())
     }
 }
 
-fn cmd_set(key: &str, value: &str, account: &str) {
-    let (account, key) = parse_key(key, account);
-    let entry = match Entry::new("seal", &format!("{}:{}", account, key)) {
+fn cmd_set(key: &str, value: &str, vault: &str) {
+    let (vault, key) = parse_key(key, vault);
+    let entry = match Entry::new("seal", &format!("{}:{}", vault, key)) {
         Ok(e) => e,
         Err(e) => {
             eprintln!("Error: {}", e);
@@ -50,18 +50,18 @@ fn cmd_set(key: &str, value: &str, account: &str) {
         std::process::exit(1);
     }
     let mut index = read_index();
-    let keys = index.entry(account.clone()).or_default();
+    let keys = index.entry(vault.clone()).or_default();
     if !keys.contains(&key) {
         keys.push(key.clone());
         keys.sort();
     }
     write_index(&index);
-    println!("Saved {}", if account == DEFAULT_ACCOUNT { key } else { format!("{}/{}", account, key) });
+    println!("Saved {}", if vault == DEFAULT_VAULT { key } else { format!("{}/{}", vault, key) });
 }
 
-fn cmd_get(key: &str, account: &str) {
-    let (account, key) = parse_key(key, account);
-    let entry = match Entry::new("seal", &format!("{}:{}", account, key)) {
+fn cmd_get(key: &str, vault: &str) {
+    let (vault, key) = parse_key(key, vault);
+    let entry = match Entry::new("seal", &format!("{}:{}", vault, key)) {
         Ok(e) => e,
         Err(e) => {
             eprintln!("Error: {}", e);
@@ -78,9 +78,9 @@ fn cmd_get(key: &str, account: &str) {
     }
 }
 
-fn cmd_delete(key: &str, account: &str) {
-    let (account, key) = parse_key(key, account);
-    let entry = match Entry::new("seal", &format!("{}:{}", account, key)) {
+fn cmd_delete(key: &str, vault: &str) {
+    let (vault, key) = parse_key(key, vault);
+    let entry = match Entry::new("seal", &format!("{}:{}", vault, key)) {
         Ok(e) => e,
         Err(e) => {
             eprintln!("Error: {}", e);
@@ -93,16 +93,16 @@ fn cmd_delete(key: &str, account: &str) {
         std::process::exit(1);
     }
     let mut index = read_index();
-    if let Some(keys) = index.get_mut(&account) {
+    if let Some(keys) = index.get_mut(&vault) {
         keys.retain(|k| k != &key);
     }
     write_index(&index);
-    println!("Deleted {}", if account == DEFAULT_ACCOUNT { key } else { format!("{}/{}", account, key) });
+    println!("Deleted {}", if vault == DEFAULT_VAULT { key } else { format!("{}/{}", vault, key) });
 }
 
-fn cmd_list(account: &str) {
+fn cmd_list(vault: &str) {
     let index = read_index();
-    let keys = index.get(account).cloned().unwrap_or_default();
+    let keys = index.get(vault).cloned().unwrap_or_default();
     for key in &keys {
         println!("{}", key);
     }
@@ -113,14 +113,14 @@ fn print_usage() {
     eprintln!();
     eprintln!("Usage:");
     eprintln!("  seal set <key> <value>             Save a secret");
-    eprintln!("  seal set ns/key value              Save under account=ns");
+    eprintln!("  seal set ns/key value              Save under vault=ns");
     eprintln!("  seal get <key>                     Retrieve a secret");
-    eprintln!("  seal get ns/key                    Retrieve from account=ns");
+    eprintln!("  seal get ns/key                    Retrieve from vault=ns");
     eprintln!("  seal delete <key>                  Delete a secret");
-    eprintln!("  seal list [account]                List keys (default: seal)");
+    eprintln!("  seal list [vault]                  List keys (default: seal)");
     eprintln!();
     eprintln!("Options:");
-    eprintln!("  --account, -a <name>               Default account (overrides SEAL_ACCOUNT env)");
+    eprintln!("  --vault, -v <name>                 Default vault (overrides SEAL_VAULT env)");
     eprintln!();
     eprintln!("Examples:");
     eprintln!("  seal set API_KEY \"sk-abc123\"");
@@ -147,19 +147,19 @@ fn main() {
         }
     }
 
-    let mut default_account = std::env::var("SEAL_ACCOUNT")
-        .unwrap_or_else(|_| DEFAULT_ACCOUNT.to_string());
+    let mut default_vault = std::env::var("SEAL_VAULT")
+        .unwrap_or_else(|_| DEFAULT_VAULT.to_string());
 
-    // Parse --account / -a flag
+    // Parse --vault / -v flag
     let mut i = 1;
     let mut filtered: Vec<String> = vec!["seal".to_string()];
     while i < args.len() {
-        if args[i] == "--account" || args[i] == "-a" {
+        if args[i] == "--vault" || args[i] == "-v" {
             if i + 1 < args.len() {
-                default_account = args[i + 1].clone();
+                default_vault = args[i + 1].clone();
                 i += 2;
             } else {
-                eprintln!("Missing account name after {}", args[i]);
+                eprintln!("Missing vault name after {}", args[i]);
                 std::process::exit(1);
             }
         } else {
@@ -179,29 +179,29 @@ fn main() {
                 eprintln!("Usage: seal set <key> <value>");
                 std::process::exit(1);
             }
-            cmd_set(&filtered[2], &filtered[3], &default_account);
+            cmd_set(&filtered[2], &filtered[3], &default_vault);
         }
         "get" => {
             if filtered.len() < 3 {
                 eprintln!("Usage: seal get <key>");
                 std::process::exit(1);
             }
-            cmd_get(&filtered[2], &default_account);
+            cmd_get(&filtered[2], &default_vault);
         }
         "delete" | "rm" => {
             if filtered.len() < 3 {
                 eprintln!("Usage: seal delete <key>");
                 std::process::exit(1);
             }
-            cmd_delete(&filtered[2], &default_account);
+            cmd_delete(&filtered[2], &default_vault);
         }
         "list" | "ls" => {
-            let account = if filtered.len() > 2 {
+            let vault = if filtered.len() > 2 {
                 filtered[2].clone()
             } else {
-                default_account.clone()
+                default_vault.clone()
             };
-            cmd_list(&account);
+            cmd_list(&vault);
         }
         "--help" | "-h" | "help" => {
             print_usage();

@@ -6,24 +6,24 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Header } from "@/components/header";
 import { LoginDialog } from "@/components/login-dialog";
-import { AddAccountDialog } from "@/components/add-account-dialog";
+import { AddVaultDialog } from "@/components/add-vault-dialog";
 import { useUser } from "@/hooks/use-user";
 
 interface Secret {
   key: string;
-  account: string;
+  vault: string;
 }
 
 function App() {
-  const [accounts, setAccounts] = useState<string[]>([]);
-  const [account, setAccount] = useState("seal");
+  const [vaults, setVaults] = useState<string[]>([]);
+  const [vault, setVault] = useState("seal");
   const [secrets, setSecrets] = useState<Secret[]>([]);
   const [newKey, setNewKey] = useState("");
   const [newValue, setNewValue] = useState("");
   const [revealed, setRevealed] = useState<Record<string, string>>({});
   const [toast, setToast] = useState<string | null>(null);
   const [loginOpen, setLoginOpen] = useState(false);
-  const [addAccountOpen, setAddAccountOpen] = useState(false);
+  const [addVaultOpen, setAddVaultOpen] = useState(false);
 
   const { user, signIn, signOut } = useUser();
 
@@ -32,10 +32,10 @@ function App() {
     setTimeout(() => setToast(null), 2000);
   }, []);
 
-  const loadAccounts = useCallback(async () => {
+  const loadVaults = useCallback(async () => {
     try {
-      const list: string[] = await invoke("list_accounts");
-      setAccounts(list);
+      const list: string[] = await invoke("list_vaults");
+      setVaults(list);
     } catch (e) {
       console.error(e);
     }
@@ -43,17 +43,17 @@ function App() {
 
   const loadSecrets = useCallback(async () => {
     try {
-      const list: Secret[] = await invoke("list_secrets", { account });
+      const list: Secret[] = await invoke("list_secrets", { vault });
       setSecrets(list);
       setRevealed({});
     } catch (e) {
       console.error(e);
     }
-  }, [account]);
+  }, [vault]);
 
   useEffect(() => {
-    loadAccounts();
-  }, [loadAccounts]);
+    loadVaults();
+  }, [loadVaults]);
 
   useEffect(() => {
     loadSecrets();
@@ -65,13 +65,13 @@ function App() {
       await invoke("save_secret", {
         key: newKey.trim(),
         value: newValue,
-        account,
+        vault,
       });
       setNewKey("");
       setNewValue("");
       showToast("Saved");
       loadSecrets();
-      loadAccounts();
+      loadVaults();
     } catch (e: any) {
       showToast(`Error: ${e}`);
     }
@@ -85,7 +85,7 @@ function App() {
       return;
     }
     try {
-      const value: string = await invoke("get_secret", { key, account });
+      const value: string = await invoke("get_secret", { key, vault });
       setRevealed((r) => ({ ...r, [key]: value }));
     } catch (e: any) {
       showToast(`Error: ${e}`);
@@ -94,7 +94,7 @@ function App() {
 
   const handleCopy = async (key: string) => {
     try {
-      const value: string = await invoke("get_secret", { key, account });
+      const value: string = await invoke("get_secret", { key, vault });
       await navigator.clipboard.writeText(value);
       showToast("Copied");
     } catch (e: any) {
@@ -104,21 +104,21 @@ function App() {
 
   const handleDelete = async (key: string) => {
     try {
-      await invoke("delete_secret", { key, account });
+      await invoke("delete_secret", { key, vault });
       loadSecrets();
-      loadAccounts();
+      loadVaults();
       showToast("Deleted");
     } catch (e: any) {
       showToast(`Error: ${e}`);
     }
   };
 
-  const handleAddAccount = async (name: string) => {
+  const handleAddVault = async (name: string) => {
     try {
-      await invoke("add_account", { account: name });
-      await loadAccounts();
-      setAccount(name);
-      showToast(`Added account "${name}"`);
+      await invoke("add_vault", { vault: name });
+      await loadVaults();
+      setVault(name);
+      showToast(`Added vault "${name}"`);
     } catch (e: any) {
       showToast(`Error: ${e}`);
     }
@@ -132,11 +132,11 @@ function App() {
   return (
     <div className="flex min-h-screen flex-col bg-background text-ink">
       <Header
-        accounts={accounts}
-        current={account}
+        vaults={vaults}
+        current={vault}
         user={user}
-        onSelectAccount={setAccount}
-        onAddAccount={() => setAddAccountOpen(true)}
+        onSelectVault={setVault}
+        onAddVault={() => setAddVaultOpen(true)}
         onSignIn={() => setLoginOpen(true)}
         onSignOut={() => {
           signOut();
@@ -186,7 +186,7 @@ function App() {
               No secrets yet
             </div>
             <p className="mt-1 font-mono text-xs text-muted-foreground">
-              Add one above, or switch accounts.
+              Add one above, or switch vaults.
             </p>
           </div>
         ) : (
@@ -253,10 +253,10 @@ function App() {
         onOpenChange={setLoginOpen}
         onSignIn={handleSignIn}
       />
-      <AddAccountDialog
-        open={addAccountOpen}
-        onOpenChange={setAddAccountOpen}
-        onAdd={handleAddAccount}
+      <AddVaultDialog
+        open={addVaultOpen}
+        onOpenChange={setAddVaultOpen}
+        onAdd={handleAddVault}
       />
     </div>
   );

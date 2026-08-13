@@ -9,19 +9,19 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-interface AccountSelectorProps {
-  accounts: string[];
+interface VaultSelectorProps {
+  vaults: string[];
   current: string;
-  onSelect: (account: string) => void;
-  onAddAccount: () => void;
+  onSelect: (vault: string) => void;
+  onAddVault: () => void;
 }
 
-export function AccountSelector({
-  accounts,
+export function VaultSelector({
+  vaults,
   current,
   onSelect,
-  onAddAccount,
-}: AccountSelectorProps) {
+  onAddVault,
+}: VaultSelectorProps) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger className="inline-flex h-9 items-center gap-2 border border-line-strong bg-background px-3 text-sm transition-colors hover:bg-accent/50 focus-visible:outline-none">
@@ -31,29 +31,29 @@ export function AccountSelector({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-56">
         <DropdownMenuLabel className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-          Account
+          Vault
         </DropdownMenuLabel>
-        {accounts.map((account) => (
+        {vaults.map((vault) => (
           <DropdownMenuItem
-            key={account}
-            onSelect={() => onSelect(account)}
+            key={vault}
+            onSelect={() => onSelect(vault)}
             className="font-mono text-[13px]"
           >
-            <span className="flex-1 truncate">{account}</span>
-            {account === current && <Check className="h-4 w-4 text-brand" />}
+            <span className="flex-1 truncate">{vault}</span>
+            {vault === current && <Check className="h-4 w-4 text-brand" />}
           </DropdownMenuItem>
         ))}
         <DropdownMenuSeparator />
         <DropdownMenuItem
-          onSelect={onAddAccount}
+          onSelect={onAddVault}
           className="font-mono text-[13px] text-brand"
         >
           <Plus className="h-4 w-4" />
-          Add account
+          Add vault
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );
 }
 
-export default AccountSelector;
+export default VaultSelector;

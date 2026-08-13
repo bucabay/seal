@@ -12,17 +12,17 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-interface AddAccountDialogProps {
+interface AddVaultDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onAdd: (name: string) => void;
 }
 
-export function AddAccountDialog({
+export function AddVaultDialog({
   open,
   onOpenChange,
   onAdd,
-}: AddAccountDialogProps) {
+}: AddVaultDialogProps) {
   const [name, setName] = useState("");
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -37,16 +37,16 @@ export function AddAccountDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-sm">
         <DialogHeader>
-          <DialogTitle className="font-display">Add account</DialogTitle>
+          <DialogTitle className="font-display">Add vault</DialogTitle>
           <DialogDescription>
-            Accounts group your secrets by project or context.
+            Vaults group your secrets by project or context.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="account">Account name</Label>
+            <Label htmlFor="vault">Vault name</Label>
             <Input
-              id="account"
+              id="vault"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="hardroad"
@@ -55,7 +55,7 @@ export function AddAccountDialog({
           </div>
           <DialogFooter>
             <Button type="submit" className="w-full">
-              Create account
+              Create vault
             </Button>
           </DialogFooter>
         </form>
@@ -64,4 +64,4 @@ export function AddAccountDialog({
   );
 }
 
-export default AddAccountDialog;
+export default AddVaultDialog;

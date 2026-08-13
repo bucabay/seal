@@ -2,25 +2,25 @@ import { Moon, ShieldCheck, Sun } from "lucide-react";
 
 import type { User } from "@/hooks/use-user";
 import { useTheme } from "@/hooks/use-theme";
-import { AccountSelector } from "@/components/account-selector";
+import { VaultSelector } from "@/components/vault-selector";
 import { UserMenu } from "@/components/user-menu";
 
 interface HeaderProps {
-  accounts: string[];
+  vaults: string[];
   current: string;
   user: User | null;
-  onSelectAccount: (account: string) => void;
-  onAddAccount: () => void;
+  onSelectVault: (vault: string) => void;
+  onAddVault: () => void;
   onSignIn: () => void;
   onSignOut: () => void;
 }
 
 export function Header({
-  accounts,
+  vaults,
   current,
   user,
-  onSelectAccount,
-  onAddAccount,
+  onSelectVault,
+  onAddVault,
   onSignIn,
   onSignOut,
 }: HeaderProps) {
@@ -37,11 +37,11 @@ export function Header({
 
       <div className="mx-2 h-6 w-px bg-line" />
 
-      <AccountSelector
-        accounts={accounts}
+      <VaultSelector
+        vaults={vaults}
         current={current}
-        onSelect={onSelectAccount}
-        onAddAccount={onAddAccount}
+        onSelect={onSelectVault}
+        onAddVault={onAddVault}
       />
 
       <div className="ml-auto flex items-center gap-2">

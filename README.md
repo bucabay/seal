@@ -34,14 +34,14 @@ cargo run --manifest-path src-tauri/Cargo.toml -- set KEY VALUE   # CLI
 ## CLI
 
 ```sh
-seal set <key> <value>      # save a secret (account defaults to "seal")
-seal set ns/key value       # save under account "ns"
+seal set <key> <value>      # save a secret (vault defaults to "seal")
+seal set ns/key value       # save under vault "ns"
 seal get <key>              # print a secret
 seal delete <key>           # delete a secret
-seal list [account]         # list keys in an account
+seal list [vault]           # list keys in a vault
 
-SEAL_ACCOUNT=gabe seal set api_key "..."   # change default account
-seal set -a gabe api_key "..."              # or via flag
+SEAL_VAULT=gabe seal set api_key "..."   # change default vault
+seal set -v gabe api_key "..."            # or via flag
 ```
 
 No args launches the GUI.
@@ -60,7 +60,7 @@ never write secrets to files, and consume via `seal get` inline
 ## Architecture
 
 - **Rust core** (`src-tauri/src/`): `keyring` crate abstracts the three OS
-  keychains behind one `Entry::new("seal", "account:key")` API.
+  keychains behind one `Entry::new("seal", "vault:key")` API.
 - **`main.rs`**: CLI parser (no deps — hand-rolled arg parsing).
 - **`lib.rs`**: Tauri command handlers shared with the GUI.
 - **Index**: keys are listed from `~/.config/seal/index.json` (or

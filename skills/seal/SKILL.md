@@ -17,24 +17,24 @@ system's native keychain. No secrets file to protect, no sync to trust.
 ## CLI reference
 
 ```sh
-seal set <key> <value>        # save a secret (account defaults to "seal")
-seal set ns/key value         # save under account "ns"
+seal set <key> <value>        # save a secret (vault defaults to "seal")
+seal set ns/key value         # save under vault "ns"
 seal get <key>                # print a secret to stdout
-seal get ns/key               # retrieve from account "ns"
+seal get ns/key               # retrieve from vault "ns"
 seal delete <key>             # delete a secret
-seal list [account]           # list keys in an account
+seal list [vault]             # list keys in a vault
 
-# Default account via env or flag
-SEAL_ACCOUNT=gabe seal set api_key "..."
-seal set -a gabe api_key "..."
+# Default vault via env or flag
+SEAL_VAULT=gabe seal set api_key "..."
+seal set -v gabe api_key "..."
 
 # No args launches the GUI
 seal
 ```
 
-Keys with a `/` are namespaced: `hardroad/db_pass` means account `hardroad`,
-key `db_pass`. Keys without a `/` go to the default account (`seal`, unless
-`SEAL_ACCOUNT` overrides it).
+Keys with a `/` are namespaced: `hardroad/db_pass` means vault `hardroad`,
+key `db_pass`. Keys without a `/` go to the default vault (`seal`, unless
+`SEAL_VAULT` overrides it).
 
 ## Rules for agents (security)
 
@@ -49,7 +49,7 @@ key `db_pass`. Keys without a `/` go to the default account (`seal`, unless
 4. **Offer to store, don't store unasked.** When a task needs a key/token, ask
    the user for the value and store it once with `seal set`, then reference it
    by key thereafter.
-5. **Namespace by project.** Use `project/key` (e.g. `hardroad/db_pass`) so a
+5. **Namespace by vault.** Use `project/key` (e.g. `hardroad/db_pass`) so a
    single default keychain stays organized across repos.
 
 ## Common patterns
