@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4f8ef7"/>
+      <stop offset="1" stop-color="#2563eb"/>
+    </linearGradient>
+    <mask id="hole">
+      <rect width="1024" height="1024" fill="#fff"/>
+      <circle cx="512" cy="445" r="52" fill="#000"/>
+      <path d="M486 460 L486 570 Q486 596 512 596 Q538 596 538 570 L538 460 Z" fill="#000"/>
+    </mask>
+  </defs>
+  <rect width="1024" height="1024" rx="224" fill="url(#bg)"/>
+  <path
+    d="M512 210 C400 270 320 350 320 460 L320 640 L512 810 L704 640 L704 460 C704 350 624 270 512 210 Z"
+    fill="#ffffff"
+    mask="url(#hole)"
+  />
+</svg>

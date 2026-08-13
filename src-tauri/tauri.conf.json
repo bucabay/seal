@@ -31,6 +31,7 @@
     "shortDescription": "Cross-platform secrets manager backed by the OS keychain",
     "longDescription": "Seal stores secrets in your operating system's native keychain (macOS Keychain, Linux Secret Service, Windows Credential Manager) and exposes them via a small CLI and GUI.",
     "icon": [
+      "icons/icon.png",
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
