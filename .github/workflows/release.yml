@@ -1,0 +1,85 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: --target aarch64-apple-darwin
+          - platform: macos-latest
+            args: --target x86_64-apple-darwin
+          - platform: windows-latest
+            args: --target x86_64-pc-windows-msvc
+          - platform: ubuntu-22.04
+            args: --target x86_64-unknown-linux-gnu
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libsecret-1-dev \
+            libdbus-1-dev
+
+      - name: Build and upload bundles
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          releaseName: "Seal v__VERSION__"
+          releaseBody: |
+            Seal is a cross-platform secrets manager backed by your OS keychain.
+
+            ## Install
+            - **macOS**: open the `.dmg`, drag `Seal.app` to Applications
+            - **Windows**: run the `.msi` (or `.exe`) installer
+            - **Linux**: install the `.deb` or run the `.AppImage`
+
+            The CLI (`seal`) is also included in the app bundle, or install it with:
+            ```sh
+            brew install bucabay/tap/seal
+            ```
+
+            > macOS builds are unsigned — if Gatekeeper blocks the app, right-click → Open, or run `xattr -dr com.apple.quarantine /Applications/Seal.app`.
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
