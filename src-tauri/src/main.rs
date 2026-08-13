@@ -1,7 +1,8 @@
-use keyring::Entry;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
+
+mod keychain;
 
 const DEFAULT_VAULT: &str = "seal";
 
@@ -38,14 +39,8 @@ fn parse_key(raw: &str, default_vault: &str) -> (String, String) {
 
 fn cmd_set(key: &str, value: &str, vault: &str) {
     let (vault, key) = parse_key(key, vault);
-    let entry = match Entry::new("seal", &format!("{}:{}", vault, key)) {
-        Ok(e) => e,
-        Err(e) => {
-            eprintln!("Error: {}", e);
-            std::process::exit(1);
-        }
-    };
-    if let Err(e) = entry.set_password(value) {
+    let full_key = format!("{}:{}", vault, key);
+    if let Err(e) = keychain::set(&full_key, value) {
         eprintln!("Error: {}", e);
         std::process::exit(1);
     }
@@ -61,14 +56,8 @@ fn cmd_set(key: &str, value: &str, vault: &str) {
 
 fn cmd_get(key: &str, vault: &str) {
     let (vault, key) = parse_key(key, vault);
-    let entry = match Entry::new("seal", &format!("{}:{}", vault, key)) {
-        Ok(e) => e,
-        Err(e) => {
-            eprintln!("Error: {}", e);
-            std::process::exit(1);
-        }
-    };
-    match entry.get_password() {
+    let full_key = format!("{}:{}", vault, key);
+    match keychain::get(&full_key) {
         Ok(value) => println!("{}", value),
         Err(e) => {
             eprintln!("Not found: {}", key);
@@ -80,14 +69,8 @@ fn cmd_get(key: &str, vault: &str) {
 
 fn cmd_delete(key: &str, vault: &str) {
     let (vault, key) = parse_key(key, vault);
-    let entry = match Entry::new("seal", &format!("{}:{}", vault, key)) {
-        Ok(e) => e,
-        Err(e) => {
-            eprintln!("Error: {}", e);
-            std::process::exit(1);
-        }
-    };
-    if let Err(e) = entry.delete_credential() {
+    let full_key = format!("{}:{}", vault, key);
+    if let Err(e) = keychain::delete(&full_key) {
         eprintln!("Not found: {}", key);
         let _ = e;
         std::process::exit(1);

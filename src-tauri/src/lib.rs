@@ -1,10 +1,11 @@
 #![cfg(feature = "gui")]
 
-use keyring::Entry;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
+
+mod keychain;
 
 const DEFAULT_VAULT: &str = "seal";
 
@@ -40,11 +41,8 @@ struct SecretEntry {
 #[tauri::command]
 fn save_secret(key: String, value: String, vault: Option<String>) -> Result<String, String> {
     let vault = vault.unwrap_or_else(|| DEFAULT_VAULT.to_string());
-    let entry = Entry::new("seal", &format!("{}:{}", vault, key))
-        .map_err(|e| format!("Keyring error: {}", e))?;
-    entry
-        .set_password(&value)
-        .map_err(|e| format!("Keyring error: {}", e))?;
+    let full_key = format!("{}:{}", vault, key);
+    keychain::set(&full_key, &value)?;
 
     let mut index = read_index();
     let keys = index.entry(vault.clone()).or_default();
@@ -60,21 +58,15 @@ fn save_secret(key: String, value: String, vault: Option<String>) -> Result<Stri
 #[tauri::command]
 fn get_secret(key: String, vault: Option<String>) -> Result<String, String> {
     let vault = vault.unwrap_or_else(|| DEFAULT_VAULT.to_string());
-    let entry = Entry::new("seal", &format!("{}:{}", vault, key))
-        .map_err(|e| format!("Keyring error: {}", e))?;
-    entry
-        .get_password()
-        .map_err(|e| format!("Not found: {}:{} ({})", vault, key, e))
+    let full_key = format!("{}:{}", vault, key);
+    keychain::get(&full_key)
 }
 
 #[tauri::command]
 fn delete_secret(key: String, vault: Option<String>) -> Result<String, String> {
     let vault = vault.unwrap_or_else(|| DEFAULT_VAULT.to_string());
-    let entry = Entry::new("seal", &format!("{}:{}", vault, key))
-        .map_err(|e| format!("Keyring error: {}", e))?;
-    entry
-        .delete_credential()
-        .map_err(|e| format!("Not found: {}:{} ({})", vault, key, e))?;
+    let full_key = format!("{}:{}", vault, key);
+    keychain::delete(&full_key)?;
 
     let mut index = read_index();
     if let Some(keys) = index.get_mut(&vault) {
