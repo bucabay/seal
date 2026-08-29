@@ -51,7 +51,8 @@ seal set <key> <value>      # save a secret (vault defaults to "seal")
 seal set ns/key value       # save under vault "ns"
 seal get <key>              # print a secret
 seal delete <key>           # delete a secret
-seal list [vault]           # list keys in a vault
+seal list                   # list every key in every vault
+seal list <pattern>         # filter: substring, or glob with * and ?
 
 SEAL_VAULT=gabe seal set api_key "..."   # change default vault
 seal set -v gabe api_key "..."            # or via flag

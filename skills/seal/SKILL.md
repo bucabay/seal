@@ -22,7 +22,8 @@ seal set ns/key value         # save under vault "ns"
 seal get <key>                # print a secret to stdout
 seal get ns/key               # retrieve from vault "ns"
 seal delete <key>             # delete a secret
-seal list [vault]             # list keys in a vault
+seal list                     # list every key in every vault
+seal list <pattern>           # filter keys (substring, or * / ? glob)
 
 # Default vault via env or flag
 SEAL_VAULT=gabe seal set api_key "..."
@@ -65,11 +66,34 @@ sk="$(seal get hardroad/stripe_sk)"  # sk now in shell var only
 STRIPE_KEY="$(seal get hardroad/stripe_sk)" ./script.sh
 
 # Check what's stored (keys only, never values)
-seal list hardroad
+seal list                 # everything, as vault/key
+seal list hardroad        # just that project
+seal list '*_token'       # quote globs so the shell doesn't expand them
 
 # Rotate / update
 seal set hardroad/stripe_sk "sk_live_new..."   # set overwrites
 ```
+
+## Listing
+
+Bare `seal list` prints every key in every vault. Keys in the default vault
+(`seal`) print bare; namespaced keys print as `vault/key`, so any line can be
+pasted straight into `seal get`.
+
+An argument filters that list. It is a case-insensitive substring match against
+both `vault/key` and the bare key, unless it contains `*` or `?`, in which case
+it is matched as a glob (`*` spans `/`). Quote globs so the shell does not
+expand them first. A pattern that matches nothing exits `1`.
+
+```sh
+seal list                 # all keys, all vaults
+seal list rack            # substring -> racknerd-mailk/root, ...
+seal list 'hardroad/*'    # one vault
+seal list '*api*key'      # glob across vaults
+```
+
+`--vault`/`-v` or `SEAL_VAULT` scopes `list` to that one vault (and prints bare
+keys), with any pattern still applied within it.
 
 ## Listing caveat
 

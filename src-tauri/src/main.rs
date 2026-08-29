@@ -83,11 +83,94 @@ fn cmd_delete(key: &str, vault: &str) {
     println!("Deleted {}", if vault == DEFAULT_VAULT { key } else { format!("{}/{}", vault, key) });
 }
 
-fn cmd_list(vault: &str) {
+/// Glob match supporting `*` (any run, including `/`) and `?` (one char).
+/// Both sides are expected to be lowercased already.
+fn glob_match(pattern: &[char], text: &[char]) -> bool {
+    // Iterative backtracking: linear in the common case, no recursion depth risk.
+    let (mut p, mut t) = (0usize, 0usize);
+    let (mut star, mut resume) = (None, 0usize);
+    while t < text.len() {
+        if p < pattern.len() && (pattern[p] == '?' || pattern[p] == text[t]) {
+            p += 1;
+            t += 1;
+        } else if p < pattern.len() && pattern[p] == '*' {
+            star = Some(p);
+            resume = t;
+            p += 1;
+        } else if let Some(sp) = star {
+            // Backtrack: let the last `*` swallow one more character.
+            p = sp + 1;
+            resume += 1;
+            t = resume;
+        } else {
+            return false;
+        }
+    }
+    while p < pattern.len() && pattern[p] == '*' {
+        p += 1;
+    }
+    p == pattern.len()
+}
+
+/// A pattern matches a key if it globs (when it contains `*`/`?`) or appears
+/// anywhere in it (plain substring). Matching is case-insensitive.
+fn matches(pattern: &str, candidate: &str) -> bool {
+    let pattern = pattern.to_lowercase();
+    let candidate = candidate.to_lowercase();
+    if pattern.contains('*') || pattern.contains('?') {
+        let p: Vec<char> = pattern.chars().collect();
+        let c: Vec<char> = candidate.chars().collect();
+        glob_match(&p, &c)
+    } else {
+        candidate.contains(&pattern)
+    }
+}
+
+fn display_key(vault: &str, key: &str) -> String {
+    if vault == DEFAULT_VAULT {
+        key.to_string()
+    } else {
+        format!("{}/{}", vault, key)
+    }
+}
+
+/// List every key in every vault, optionally filtered by `pattern`. The pattern
+/// is tested against the namespaced `vault/key` and against the bare key, so
+/// `seal list hard`, `seal list hardroad/db*` and `seal list *pass` all work.
+fn cmd_list(pattern: Option<&str>) {
+    let index = read_index();
+    let mut found = false;
+    for (vault, keys) in &index {
+        for key in keys {
+            let full = format!("{}/{}", vault, key);
+            let hit = match pattern {
+                None => true,
+                Some(p) => matches(p, &full) || matches(p, key),
+            };
+            if hit {
+                println!("{}", display_key(vault, key));
+                found = true;
+            }
+        }
+    }
+    if !found && pattern.is_some() {
+        std::process::exit(1);
+    }
+}
+
+/// List one vault only (used when --vault/-v or SEAL_VAULT scopes the command).
+fn cmd_list_vault(vault: &str, pattern: Option<&str>) {
     let index = read_index();
     let keys = index.get(vault).cloned().unwrap_or_default();
+    let mut found = false;
     for key in &keys {
-        println!("{}", key);
+        if pattern.map_or(true, |p| matches(p, key)) {
+            println!("{}", key);
+            found = true;
+        }
+    }
+    if !found && pattern.is_some() {
+        std::process::exit(1);
     }
 }
 
@@ -100,7 +183,8 @@ fn print_usage() {
     eprintln!("  seal get <key>                     Retrieve a secret");
     eprintln!("  seal get ns/key                    Retrieve from vault=ns");
     eprintln!("  seal delete <key>                  Delete a secret");
-    eprintln!("  seal list [vault]                  List keys (default: seal)");
+    eprintln!("  seal list                          List keys in every vault");
+    eprintln!("  seal list <pattern>                Filter keys (substring or *? glob)");
     eprintln!();
     eprintln!("Options:");
     eprintln!("  --vault, -v <name>                 Default vault (overrides SEAL_VAULT env)");
@@ -109,7 +193,9 @@ fn print_usage() {
     eprintln!("  seal set API_KEY \"sk-abc123\"");
     eprintln!("  seal set hardroad/db_pass \"hunter2\"");
     eprintln!("  seal get hardroad/db_pass");
+    eprintln!("  seal list");
     eprintln!("  seal list hardroad");
+    eprintln!("  seal list '*_key'");
     eprintln!();
     eprintln!("Backends: macOS Keychain | Linux Secret Service | Windows Credential Manager");
 }
@@ -130,8 +216,9 @@ fn main() {
         }
     }
 
-    let mut default_vault = std::env::var("SEAL_VAULT")
-        .unwrap_or_else(|_| DEFAULT_VAULT.to_string());
+    let env_vault = std::env::var("SEAL_VAULT").ok();
+    let mut vault_is_explicit = env_vault.is_some();
+    let mut default_vault = env_vault.unwrap_or_else(|| DEFAULT_VAULT.to_string());
 
     // Parse --vault / -v flag
     let mut i = 1;
@@ -140,6 +227,7 @@ fn main() {
         if args[i] == "--vault" || args[i] == "-v" {
             if i + 1 < args.len() {
                 default_vault = args[i + 1].clone();
+                vault_is_explicit = true;
                 i += 2;
             } else {
                 eprintln!("Missing vault name after {}", args[i]);
@@ -179,12 +267,13 @@ fn main() {
             cmd_delete(&filtered[2], &default_vault);
         }
         "list" | "ls" => {
-            let vault = if filtered.len() > 2 {
-                filtered[2].clone()
+            let pattern = filtered.get(2).map(|s| s.as_str());
+            if vault_is_explicit {
+                cmd_list_vault(&default_vault, pattern);
             } else {
-                default_vault.clone()
-            };
-            cmd_list(&vault);
+                // Bare `seal list` shows every vault; an argument filters it.
+                cmd_list(pattern);
+            }
         }
         "--help" | "-h" | "help" => {
             print_usage();
