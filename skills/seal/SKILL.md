@@ -102,3 +102,13 @@ Keychain APIs cannot enumerate entries, so `seal list` reads a local index at
 (Windows). That file holds **keys only** — no values. If it's missing or
 stale, `seal get` still works; `list` just may not show keys saved from
 another machine.
+
+**Rebuild the index (macOS):** `scripts/reindex.sh` in the seal repo reads
+service/account names from the login keychain with `security dump-keychain` (metadata
+only, never values) and rewrites `index.json`. Run it yourself: the dump enumerates every
+keychain item's name, so an agent should ask the user to run it rather than run it
+unprompted.
+
+```sh
+~/code/seal/scripts/reindex.sh     # then `seal list` works again
+```
