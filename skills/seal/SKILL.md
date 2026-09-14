@@ -23,6 +23,7 @@ seal get <key>                # print a secret to stdout
 seal get ns/key               # retrieve from vault "ns"
 seal delete <key>             # delete a secret
 seal list                     # list every key in every vault
+seal list <ns>                # list one vault (namespace)
 seal list <pattern>           # filter keys (substring, or * / ? glob)
 
 # Default vault via env or flag
@@ -67,7 +68,7 @@ STRIPE_KEY="$(seal get hardroad/stripe_sk)" ./script.sh
 
 # Check what's stored (keys only, never values)
 seal list                 # everything, as vault/key
-seal list hardroad        # just that project
+seal list hardroad        # just that project (namespace)
 seal list '*_token'       # quote globs so the shell doesn't expand them
 
 # Rotate / update
@@ -76,39 +77,46 @@ seal set hardroad/stripe_sk "sk_live_new..."   # set overwrites
 
 ## Listing
 
-Bare `seal list` prints every key in every vault. Keys in the default vault
-(`seal`) print bare; namespaced keys print as `vault/key`, so any line can be
-pasted straight into `seal get`.
+Bare `seal list` prints every key in every vault — as do `seal list '*'` and
+`seal list ''`, which are the same command. Keys in the default vault (`seal`)
+print bare; namespaced keys print as `vault/key`, so any line can be pasted
+straight into `seal get`.
 
-An argument filters that list. It is a case-insensitive substring match against
-both `vault/key` and the bare key, unless it contains `*` or `?`, in which case
-it is matched as a glob (`*` spans `/`). Quote globs so the shell does not
-expand them first. A pattern that matches nothing exits `1`.
+An argument narrows the list:
+
+- **A vault name** lists that namespace: `seal list hardroad` (or `hardroad/`).
+  An exact vault name wins over substring matching, so `seal list mailkite`
+  lists the `mailkite` vault rather than every key containing "mailkite".
+- **Anything else** is a case-insensitive substring match against both
+  `vault/key` and the bare key — unless it contains `*` or `?`, in which case it
+  is matched as a glob (`*` spans `/`). Quote globs so the shell does not expand
+  them first.
+
+A pattern that matches nothing exits `1`.
 
 ```sh
 seal list                 # all keys, all vaults
+seal list '*'             # identical to bare `seal list`
+seal list hardroad        # one namespace
+seal list hardroad/db     # within a namespace
 seal list rack            # substring -> racknerd-mailk/root, ...
-seal list 'hardroad/*'    # one vault
 seal list '*api*key'      # glob across vaults
 ```
 
 `--vault`/`-v` or `SEAL_VAULT` scopes `list` to that one vault (and prints bare
 keys), with any pattern still applied within it.
 
-## Listing caveat
+## How listing finds keys
 
-Keychain APIs cannot enumerate entries, so `seal list` reads a local index at
-`~/.config/seal/index.json` (Linux/macOS) or `%APPDATA%\seal\index.json`
-(Windows). That file holds **keys only** — no values. If it's missing or
-stale, `seal get` still works; `list` just may not show keys saved from
-another machine.
+**macOS:** `seal list` enumerates the login keychain directly (`security
+dump-keychain`, which prints attribute *names* only — reading a value needs
+`-d`, which Seal never passes) and refreshes a local name cache at
+`~/Library/Application Support/seal/index.json`. There is nothing to rebuild: a
+missing or stale cache repairs itself on the next `list`, and secrets written by
+another build, or by `security` directly, show up straight away.
 
-**Rebuild the index (macOS):** `scripts/reindex.sh` in the seal repo reads
-service/account names from the login keychain with `security dump-keychain` (metadata
-only, never values) and rewrites `index.json`. Run it yourself: the dump enumerates every
-keychain item's name, so an agent should ask the user to run it rather than run it
-unprompted.
-
-```sh
-~/code/seal/scripts/reindex.sh     # then `seal list` works again
-```
+**Linux / Windows:** Secret Service and Credential Manager cannot be enumerated
+through the keyed API Seal uses, so that cache — `~/.config/seal/index.json` or
+`%APPDATA%\seal\index.json` — is the only source for `list`. It holds **keys
+only**, never values. If it is missing or stale there, `seal get` still works;
+`list` just may not show keys saved on another machine.

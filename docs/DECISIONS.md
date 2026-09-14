@@ -39,19 +39,33 @@ session); `-A` only removes the per-app re-prompt.
 fine for user-initiated actions). A side benefit: the keychain-item ACL is
 identical for the CLI and GUI, so cross-binary reads never prompt.
 
-## Local index for listing
+## Local index for listing — as a cache, not a source of truth
 
-**Decision:** maintain `~/.config/seal/index.json` (keys only) instead of
-listing from the keychain.
+**Decision:** maintain an index of key names (never values) at
+`~/Library/Application Support/seal/index.json` (macOS),
+`~/.config/seal/index.json` (Linux) or `%APPDATA%\seal\index.json` (Windows),
+**but** re-derive it from the keychain on every `list` wherever the platform can
+enumerate.
 
-**Rationale:** keychain APIs cannot enumerate entries — `security
-find-generic-password` returns a single match, and there is no cross-platform
-"list all" call. A local index is the only way to power `seal list` and the
-GUI's vault/secret lists.
+**Rationale:** the keyed APIs Seal writes through cannot enumerate — `security
+find-generic-password` returns a single match, and `keyring::Entry` is lookup
+only — so something has to remember the names. Treating that file as the *truth*
+was the mistake: it is absent on a fresh machine, absent after a keychain
+restore, and wrong whenever an entry is written by another build or removed with
+`security` directly. In each case `seal list` printed nothing while the secrets
+were sitting in the keychain, which reads as "Seal lost my data".
 
-**Consequences:** the index can go stale if secrets are added out-of-band (e.g.
-another machine). It never holds secret values, so a stale index is a
-correctness nit, not a security issue.
+macOS can in fact enumerate, via `security dump-keychain`. That prints item
+*attributes* — service and account names — and nothing else; a value requires
+`-d`, which Seal never passes. So on macOS `list` reads the names back from the
+keychain, rewrites the index from them, and needs no repair step.
+
+**Consequences:** on macOS the index cannot drift — out-of-band writes appear on
+the next `list`, and out-of-band deletions disappear. An empty enumeration
+(locked or unreadable keychain) is treated as "no information" and leaves a
+populated index intact, so a transient failure cannot erase it. On Linux and
+Windows the index remains the only source and can still go stale; it never holds
+secret values, so that stays a correctness nit rather than a security issue.
 
 ## CLI-only build via cargo feature gating
 

@@ -1,33 +1,7 @@
-use std::collections::BTreeMap;
-use std::fs;
-use std::path::PathBuf;
-
+mod index;
 mod keychain;
 
-const DEFAULT_VAULT: &str = "seal";
-
-fn index_path() -> PathBuf {
-    let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
-    path.push("seal");
-    fs::create_dir_all(&path).ok();
-    path.push("index.json");
-    path
-}
-
-fn read_index() -> BTreeMap<String, Vec<String>> {
-    let path = index_path();
-    if !path.exists() {
-        return BTreeMap::new();
-    }
-    let data = fs::read_to_string(&path).unwrap_or_default();
-    serde_json::from_str(&data).unwrap_or_default()
-}
-
-fn write_index(index: &BTreeMap<String, Vec<String>>) {
-    let path = index_path();
-    let data = serde_json::to_string_pretty(index).unwrap_or_default();
-    fs::write(&path, data).ok();
-}
+use index::DEFAULT_VAULT;
 
 fn parse_key(raw: &str, default_vault: &str) -> (String, String) {
     if let Some((vault, key)) = raw.split_once('/') {
@@ -44,13 +18,7 @@ fn cmd_set(key: &str, value: &str, vault: &str) {
         eprintln!("Error: {}", e);
         std::process::exit(1);
     }
-    let mut index = read_index();
-    let keys = index.entry(vault.clone()).or_default();
-    if !keys.contains(&key) {
-        keys.push(key.clone());
-        keys.sort();
-    }
-    write_index(&index);
+    index::add(&vault, &key);
     println!("Saved {}", if vault == DEFAULT_VAULT { key } else { format!("{}/{}", vault, key) });
 }
 
@@ -75,11 +43,7 @@ fn cmd_delete(key: &str, vault: &str) {
         let _ = e;
         std::process::exit(1);
     }
-    let mut index = read_index();
-    if let Some(keys) = index.get_mut(&vault) {
-        keys.retain(|k| k != &key);
-    }
-    write_index(&index);
+    index::remove(&vault, &key);
     println!("Deleted {}", if vault == DEFAULT_VAULT { key } else { format!("{}/{}", vault, key) });
 }
 
@@ -134,44 +98,81 @@ fn display_key(vault: &str, key: &str) -> String {
     }
 }
 
-/// List every key in every vault, optionally filtered by `pattern`. The pattern
-/// is tested against the namespaced `vault/key` and against the bare key, so
-/// `seal list hard`, `seal list hardroad/db*` and `seal list *pass` all work.
+/// A pattern that means "everything": absent, empty, or a bare `*`. `seal list`,
+/// `seal list ''` and `seal list '*'` are the same command.
+fn effective_pattern(pattern: Option<&str>) -> Option<&str> {
+    pattern.filter(|p| !p.is_empty() && *p != "*" && *p != "*/*")
+}
+
+fn print_entries(vault: &str, keys: &[String], bare: bool) -> bool {
+    for key in keys {
+        println!("{}", if bare { key.clone() } else { display_key(vault, key) });
+    }
+    !keys.is_empty()
+}
+
+/// List every key in every vault, optionally narrowed by `pattern`.
+///
+/// A pattern that names a vault (`seal list hardroad`, `seal list hardroad/`)
+/// lists that namespace. Anything else is matched against both the namespaced
+/// `vault/key` and the bare key, so `seal list hardroad/db*` and
+/// `seal list '*pass'` both work.
 fn cmd_list(pattern: Option<&str>) {
-    let index = read_index();
+    let index = index::load();
+    let pattern = effective_pattern(pattern);
+
+    // Exact namespace wins over substring matching, so `seal list seal` lists
+    // the default vault rather than every key with "seal" in its name.
+    if let Some(name) = pattern {
+        let name = name.strip_suffix('/').unwrap_or(name);
+        if let Some(vault) = index::find_vault(&index, name) {
+            if !print_entries(vault, &index[vault], false) {
+                eprintln!("Vault '{}' has no secrets", vault);
+            }
+            return;
+        }
+    }
+
     let mut found = false;
     for (vault, keys) in &index {
         for key in keys {
             let full = format!("{}/{}", vault, key);
-            let hit = match pattern {
-                None => true,
-                Some(p) => matches(p, &full) || matches(p, key),
-            };
-            if hit {
+            if pattern.map_or(true, |p| matches(p, &full) || matches(p, key)) {
                 println!("{}", display_key(vault, key));
                 found = true;
             }
         }
     }
-    if !found && pattern.is_some() {
-        std::process::exit(1);
+
+    if !found {
+        if pattern.is_some() {
+            std::process::exit(1);
+        }
+        eprintln!("No secrets yet — save one with `seal set <key> <value>`");
     }
 }
 
 /// List one vault only (used when --vault/-v or SEAL_VAULT scopes the command).
+/// Keys print bare here because the scope already names the vault.
 fn cmd_list_vault(vault: &str, pattern: Option<&str>) {
-    let index = read_index();
-    let keys = index.get(vault).cloned().unwrap_or_default();
-    let mut found = false;
-    for key in &keys {
-        if pattern.map_or(true, |p| matches(p, key)) {
-            println!("{}", key);
-            found = true;
-        }
+    let index = index::load();
+    let pattern = effective_pattern(pattern);
+    let keys = index::find_vault(&index, vault)
+        .map(|v| index[v].clone())
+        .unwrap_or_default();
+
+    let matched: Vec<String> = keys
+        .into_iter()
+        .filter(|key| pattern.map_or(true, |p| matches(p, key)))
+        .collect();
+
+    if print_entries(vault, &matched, true) {
+        return;
     }
-    if !found && pattern.is_some() {
+    if pattern.is_some() {
         std::process::exit(1);
     }
+    eprintln!("Vault '{}' has no secrets (scope set by --vault/SEAL_VAULT)", vault);
 }
 
 fn print_usage() {
@@ -183,18 +184,21 @@ fn print_usage() {
     eprintln!("  seal get <key>                     Retrieve a secret");
     eprintln!("  seal get ns/key                    Retrieve from vault=ns");
     eprintln!("  seal delete <key>                  Delete a secret");
-    eprintln!("  seal list                          List keys in every vault");
+    eprintln!("  seal list                          List every key in every vault");
+    eprintln!("  seal list <ns>                     List one vault (namespace)");
     eprintln!("  seal list <pattern>                Filter keys (substring or *? glob)");
     eprintln!();
     eprintln!("Options:");
     eprintln!("  --vault, -v <name>                 Default vault (overrides SEAL_VAULT env)");
+    eprintln!("  --version, -V                      Print the installed version");
     eprintln!();
     eprintln!("Examples:");
     eprintln!("  seal set API_KEY \"sk-abc123\"");
     eprintln!("  seal set hardroad/db_pass \"hunter2\"");
     eprintln!("  seal get hardroad/db_pass");
-    eprintln!("  seal list");
-    eprintln!("  seal list hardroad");
+    eprintln!("  seal list                          # everything; same as `seal list '*'`");
+    eprintln!("  seal list hardroad                 # everything in vault `hardroad`");
+    eprintln!("  seal list hardroad/db*             # globbed within a vault");
     eprintln!("  seal list '*_key'");
     eprintln!();
     eprintln!("Backends: macOS Keychain | Linux Secret Service | Windows Credential Manager");
@@ -275,6 +279,9 @@ fn main() {
                 cmd_list(pattern);
             }
         }
+        "--version" | "-V" | "version" => {
+            println!("seal {}", env!("CARGO_PKG_VERSION"));
+        }
         "--help" | "-h" | "help" => {
             print_usage();
         }
@@ -283,5 +290,55 @@ fn main() {
             print_usage();
             std::process::exit(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn absent_empty_and_star_all_mean_everything() {
+        assert_eq!(effective_pattern(None), None);
+        assert_eq!(effective_pattern(Some("")), None);
+        assert_eq!(effective_pattern(Some("*")), None);
+        assert_eq!(effective_pattern(Some("*/*")), None);
+        assert_eq!(effective_pattern(Some("hardroad")), Some("hardroad"));
+    }
+
+    #[test]
+    fn plain_patterns_match_as_substrings_case_insensitively() {
+        assert!(matches("mail", "mailkite/openai-secret"));
+        assert!(matches("MAIL", "mailkite/openai-secret"));
+        assert!(matches("kite/openai", "mailkite/openai-secret"));
+        assert!(!matches("stripe", "mailkite/openai-secret"));
+    }
+
+    #[test]
+    fn globs_anchor_to_the_whole_candidate_and_cross_slashes() {
+        assert!(matches("*_key", "hardroad/api_key"));
+        assert!(matches("hardroad/db*", "hardroad/db_pass"));
+        assert!(matches("hard*/*pass", "hardroad/db_pass"));
+        assert!(matches("db_pas?", "db_pass"));
+        assert!(!matches("hardroad/db*", "other/db_pass"));
+        assert!(!matches("db_pas?", "db_passs"));
+    }
+
+    #[test]
+    fn display_strips_only_the_default_vault() {
+        assert_eq!(display_key(DEFAULT_VAULT, "token"), "token");
+        assert_eq!(display_key("hardroad", "token"), "hardroad/token");
+    }
+
+    #[test]
+    fn namespaced_keys_split_on_the_first_slash() {
+        assert_eq!(
+            parse_key("hardroad/db_pass", DEFAULT_VAULT),
+            ("hardroad".into(), "db_pass".into())
+        );
+        assert_eq!(
+            parse_key("token", "gabe"),
+            ("gabe".into(), "token".into())
+        );
     }
 }

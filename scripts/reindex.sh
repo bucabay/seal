@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Rebuild ~/.config/seal/index.json from the macOS login keychain.
+# Rebuild the seal name index from the macOS login keychain.
 #
-# `seal list` reads a local index because keychain APIs cannot enumerate items.
-# If that index is missing or stale (fresh machine, restored keychain, entries
-# saved by another build), rebuild it from keychain *metadata*: this script only
-# reads service/account names, never secret values.
+# Mostly obsolete: `seal list` now enumerates the keychain itself on macOS and
+# rewrites the index every time, so a missing or stale index repairs itself.
+# Kept as a standalone repair tool for machines still running an older `seal`
+# (check with `seal --version`), where `list` trusts the index without checking
+# the keychain. Like `seal list`, it reads service/account *names*, never values.
 #
 #   scripts/reindex.sh          # rebuild and print the keys
 set -euo pipefail
@@ -14,7 +15,9 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
-INDEX_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/seal"
+# Must match Rust's dirs::config_dir(), which on macOS is Application Support —
+# *not* ~/.config. Writing to ~/.config here made this script a silent no-op.
+INDEX_DIR="$HOME/Library/Application Support/seal"
 INDEX="$INDEX_DIR/index.json"
 mkdir -p "$INDEX_DIR"
 

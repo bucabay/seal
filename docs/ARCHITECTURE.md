@@ -21,7 +21,7 @@ listing (the keychain cannot enumerate).
 │                  │                                          │
 │       ┌──────────▼──────────┐        ┌──────────────────┐   │
 │       │  keychain.rs        │        │  index.json      │   │
-│       │  (platform backend) │        │  (~/.config/seal)│   │
+│       │  (platform backend) │        │  (name cache)    │   │
 │       └──────────┬──────────┘        └────────┬─────────┘   │
 │                  │                            │             │
 └──────────────────┼────────────────────────────┼─────────────┘
@@ -105,14 +105,25 @@ The format is identical across platforms, so a vault's secrets are portable.
 
 ### Local index
 
-Keychain APIs cannot enumerate, so keys are mirrored to a JSON file:
+The keyed keychain APIs cannot enumerate, so key names are mirrored to a JSON
+file:
 
-- macOS / Linux: `~/.config/seal/index.json`
+- macOS: `~/Library/Application Support/seal/index.json`
+- Linux: `~/.config/seal/index.json`
 - Windows: `%APPDATA%\seal\index.json`
 
 Shape: `{ "vault_name": ["key1", "key2"] }` — **keys only, never values.**
-If the index is missing or stale, `get`/`set`/`delete` still work; only `list`
-(and the GUI's vault/secret list) relies on it.
+
+On macOS the index is a *cache*, not the truth: `list` enumerates the login
+keychain with `security dump-keychain` (attribute names only — printing a value
+requires `-d`, which Seal never passes), rewrites the index from what it finds,
+and so recovers automatically from a missing or stale one. An empty enumeration
+is treated as "keychain unreadable" and leaves a populated index alone rather
+than erasing it.
+
+On Linux and Windows there is no enumeration, so the index is the only source
+for `list`. If it is missing or stale there, `get`/`set`/`delete` still work;
+only `list` (and the GUI's vault/secret list) is affected.
 
 ## Feature gating
 

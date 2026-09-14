@@ -52,6 +52,7 @@ seal set ns/key value       # save under vault "ns"
 seal get <key>              # print a secret
 seal delete <key>           # delete a secret
 seal list                   # list every key in every vault
+seal list <ns>              # list one vault: seal list hardroad
 seal list <pattern>         # filter: substring, or glob with * and ?
 
 SEAL_VAULT=gabe seal set api_key "..."   # change default vault

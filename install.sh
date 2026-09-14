@@ -23,6 +23,15 @@ fi
 ln -sf "$BIN_SRC" "$INSTALL_DIR/seal"
 echo "==> Installed: $INSTALL_DIR/seal"
 
+# A `seal` earlier in PATH (typically a Homebrew build) would silently shadow
+# what we just installed, which looks exactly like the install having no effect.
+hash -r 2>/dev/null || true
+ACTIVE="$(command -v seal || true)"
+if [ -n "$ACTIVE" ] && [ "$ACTIVE" != "$INSTALL_DIR/seal" ]; then
+  echo "==> WARNING: '$ACTIVE' comes first in PATH and will be used instead."
+  echo "    Remove it (e.g. 'brew uninstall seal') or put $INSTALL_DIR ahead of it."
+fi
+
 # Install the agent skill (Claude Code + opencode both read ~/.claude/skills)
 SKILL_DIR="${HOME}/.claude/skills/seal"
 mkdir -p "$SKILL_DIR"
