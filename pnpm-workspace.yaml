@@ -1,0 +1,6 @@
+# esbuild's postinstall fetches its platform binary; Vite cannot build without
+# it. pnpm 11 reads this file, pnpm 10 (what CI pins) reads the equivalent
+# `pnpm.onlyBuiltDependencies` in package.json — both are kept so a build works
+# on either.
+allowBuilds:
+  esbuild: true
