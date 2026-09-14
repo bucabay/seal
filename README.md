@@ -16,6 +16,8 @@ system's native keychain — no secrets file to protect, no sync to trust.
   list, reveal/copy/delete, dark & light themes
 - **Vaults** — group secrets by project (`hardroad/db_pass` = vault `hardroad`,
   key `db_pass`)
+- **Environments** — per-vault overlays (`dev`, `staging`, `production`) that
+  inherit from what they extend, so each one stores only what it overrides
 - **Zero-trust storage** — secrets live only in the OS keychain; nothing
   sensitive is written to disk
 - **Agent skill** — ships with a Claude Code / opencode skill that encodes the
@@ -55,11 +57,40 @@ seal list                   # list every key in every vault
 seal list <ns>              # list one vault: seal list hardroad
 seal list <pattern>         # filter: substring, or glob with * and ?
 
+seal env                    # list environments and what each extends
+seal env add <name>         # declare one (extends `default` unless --extends)
+seal env rm <name>          # remove an empty environment
+
 SEAL_VAULT=gabe seal set api_key "..."   # change default vault
 seal set -v gabe api_key "..."            # or via flag
+SEAL_ENV=production seal get db_url       # change environment
+seal get db_url -e production             # or via flag
 ```
 
 No args launches the GUI.
+
+## Environments
+
+Every vault has its own environments, rooted at `default`. An environment
+stores only the keys it overrides; anything else is read from the environment
+it extends, so `production` needs a `db_url` but not a copy of every other
+secret:
+
+```sh
+seal env add production -v mailkite            # extends default
+seal env add dev --extends production -v mailkite
+seal set mailkite/db_url "postgres://..." -e production
+seal get mailkite/api_key -e dev               # dev -> production -> default
+seal list -v mailkite -e dev                   # effective config, inherited marked
+```
+
+Reads walk that chain nearest-first. Deletes do not: `seal delete` only removes
+what the named environment owns, and tells you where an inherited value
+actually lives rather than pulling it out from under its siblings.
+
+Secrets written before environments existed are unaffected — the `default`
+environment uses the same keychain addressing it always did, so nothing needs
+migrating.
 
 ## Agent skill
 

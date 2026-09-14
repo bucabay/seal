@@ -26,9 +26,17 @@ seal list                     # list every key in every vault
 seal list <ns>                # list one vault (namespace)
 seal list <pattern>           # filter keys (substring, or * / ? glob)
 
+seal env                      # list environments and what each extends
+seal env add <name>           # declare one (extends `default` unless --extends)
+seal env rm <name>            # remove an empty environment
+
 # Default vault via env or flag
 SEAL_VAULT=gabe seal set api_key "..."
 seal set -v gabe api_key "..."
+
+# Environment via env or flag
+SEAL_ENV=production seal get db_url
+seal get db_url -e production
 
 # No args launches the GUI
 seal
@@ -37,6 +45,32 @@ seal
 Keys with a `/` are namespaced: `hardroad/db_pass` means vault `hardroad`,
 key `db_pass`. Keys without a `/` go to the default vault (`seal`, unless
 `SEAL_VAULT` overrides it).
+
+## Environments
+
+Each vault has its own environments, rooted at `default`. An environment stores
+only what it overrides; every other key is read from the environment it extends.
+Commands run against `default` unless `-e`/`--env` or `SEAL_ENV` says otherwise,
+so a user who never mentions environments never sees them.
+
+```sh
+seal env add production -v mailkite              # extends default
+seal env add dev --extends production -v mailkite
+seal set mailkite/db_url "postgres://..." -e production
+seal get mailkite/api_key -e dev                 # dev -> production -> default
+seal list -v mailkite -e dev                     # effective config for dev
+```
+
+Notes that matter when scripting:
+
+- `get` walks the chain nearest-first, so a value may come from an ancestor.
+- `delete` only removes what the named environment *owns*. An inherited value
+  must be deleted in the environment that defines it; `seal delete` says which
+  one that is and exits `1`.
+- `seal set -e <new-env>` creates the environment implicitly, extending
+  `default` — the same shape `seal env add` produces.
+- Listing an environment tags each key with where it lives and marks the
+  inherited ones.
 
 ## Rules for agents (security)
 

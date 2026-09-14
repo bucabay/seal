@@ -3,14 +3,20 @@ import { Moon, ShieldCheck, Sun } from "lucide-react";
 import type { User } from "@/hooks/use-user";
 import { useTheme } from "@/hooks/use-theme";
 import { VaultSelector } from "@/components/vault-selector";
+import { EnvSelector, type EnvEntry } from "@/components/env-selector";
 import { UserMenu } from "@/components/user-menu";
 
 interface HeaderProps {
   vaults: string[];
   current: string;
+  envs: EnvEntry[];
+  currentEnv: string;
   user: User | null;
   onSelectVault: (vault: string) => void;
   onAddVault: () => void;
+  onSelectEnv: (env: string) => void;
+  onAddEnv: () => void;
+  onDeleteEnv: (env: string) => void;
   onSignIn: () => void;
   onSignOut: () => void;
 }
@@ -18,9 +24,14 @@ interface HeaderProps {
 export function Header({
   vaults,
   current,
+  envs,
+  currentEnv,
   user,
   onSelectVault,
   onAddVault,
+  onSelectEnv,
+  onAddEnv,
+  onDeleteEnv,
   onSignIn,
   onSignOut,
 }: HeaderProps) {
@@ -42,6 +53,14 @@ export function Header({
         current={current}
         onSelect={onSelectVault}
         onAddVault={onAddVault}
+      />
+
+      <EnvSelector
+        envs={envs}
+        current={currentEnv}
+        onSelect={onSelectEnv}
+        onAddEnv={onAddEnv}
+        onDeleteEnv={onDeleteEnv}
       />
 
       <div className="ml-auto flex items-center gap-2">

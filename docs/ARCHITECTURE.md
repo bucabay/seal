@@ -39,24 +39,28 @@ Frontend (React + ShadCN) ── invoke() ──► lib.rs commands ──► ke
 ### `src-tauri/src/main.rs` — CLI (binary `seal`)
 
 - Hand-rolled argument parser (no `clap` dependency).
-- Commands: `set`/`save`, `get`, `delete`/`rm`, `list`/`ls`, `--help`.
+- Commands: `set`/`save`, `get`, `delete`/`rm`, `list`/`ls`, `env`, `--help`.
 - Flag `--vault`/`-v` and env `SEAL_VAULT` override the default vault.
+- Flag `--env`/`-e` and env `SEAL_ENV` override the environment (`default`).
 - Key parsing: `ns/key` → vault `ns`, key `key`; bare `key` → default vault.
 - No args: launches the GUI (when the `gui` feature is enabled) or prints usage.
 
 ### `src-tauri/src/lib.rs` — Tauri commands (library `seal_lib`)
 
 Gated behind `#![cfg(feature = "gui")]` so the CLI-only build ships without
-Tauri. Exposes six commands to the frontend via `invoke`:
+Tauri. Exposes nine commands to the frontend via `invoke`:
 
 | Command | Purpose |
 |---|---|
-| `save_secret(key, value, vault)` | store a secret |
-| `get_secret(key, vault)` | retrieve a secret |
-| `delete_secret(key, vault)` | remove a secret |
-| `list_secrets(vault)` | list keys in a vault |
+| `save_secret(key, value, vault, env)` | store a secret |
+| `get_secret(key, vault, env)` | retrieve a secret, walking the extends chain |
+| `delete_secret(key, vault, env)` | remove what this environment owns |
+| `list_secrets(vault, env)` | effective keys for an environment, inherited marked |
 | `list_vaults()` | list all vault names |
 | `add_vault(vault)` | create an empty vault |
+| `list_envs(vault)` | environments, what each extends, and its own key count |
+| `add_env(vault, name, extends)` | declare an environment |
+| `delete_env(vault, name)` | remove an empty environment |
 
 ### `src-tauri/src/keychain.rs` — platform backend
 
@@ -96,12 +100,19 @@ keychain::delete(account: &str)           -> Result<(), String>
 Each secret is one generic-password entry:
 
 - **service** = `seal` (constant, the app name)
-- **account** = `"{vault}:{key}"` (e.g. `hardroad:db_pass`)
+- **account** = `"{vault}:{key}"`, or `"{vault}/{env}:{key}"` outside the
+  default environment (e.g. `hardroad:db_pass`, `hardroad/production:db_pass`)
 - **password** = the secret value
 
 This maps to `security add-generic-password -s seal -a hardroad:db_pass -w …`
 on macOS and `keyring::Entry::new("seal", "hardroad:db_pass")` on Linux/Windows.
 The format is identical across platforms, so a vault's secrets are portable.
+
+The `default` environment deliberately keeps the bare `{vault}:{key}` form it
+had before environments existed, so every secret written by an older binary
+resolves unchanged with no migration step. Only the portion before the first
+`:` is scoped, so keys may still contain `/` and `:` exactly as they could
+before.
 
 ### Local index
 
@@ -112,7 +123,21 @@ file:
 - Linux: `~/.config/seal/index.json`
 - Windows: `%APPDATA%\seal\index.json`
 
-Shape: `{ "vault_name": ["key1", "key2"] }` — **keys only, never values.**
+Shape (schema v2): `{ "version": 2, "vaults": { "<vault>": { "envs": {
+"<env>": { "extends": "<parent>" } }, "keys": { "<env>": ["key1", "key2"] } } } }`
+— **keys only, never values.** A v1 file (`{ "vault": ["key"] }`) is migrated on
+read, with every key landing in the `default` environment.
+
+The two halves are trusted differently. **Key names are derived** — on macOS
+they are re-read from the keychain on every load, so a stale file cannot hide a
+secret. **The environment graph is authoritative**: which environments exist and
+what each extends cannot be recovered from key names (an environment may be
+declared before it holds anything), so it is preserved across every rebuild.
+
+A new environment always extends `default` unless told otherwise, whether it is
+declared with `seal env add` or created implicitly by `seal set -e`. Both paths
+go through `Vault::declare_env`, so an environment is an overlay on the root
+rather than an island, and inheritance behaves the same either way.
 
 On macOS the index is a *cache*, not the truth: `list` enumerates the login
 keychain with `security dump-keychain` (attribute names only — printing a value
