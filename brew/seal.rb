@@ -1,8 +1,8 @@
 class Seal < Formula
   desc "Cross-platform secrets manager (CLI + GUI) backed by the OS keychain"
   homepage "https://github.com/bucabay/seal"
-  url "https://github.com/bucabay/seal/archive/refs/tags/v0.1.4.tar.gz"
-  sha256 "42d2a4d8a2ea7119c05328a9653372a9b50c82e7dc2360ba8ae808944fff64d3"
+  url "https://github.com/bucabay/seal/archive/refs/tags/v0.1.5.tar.gz"
+  sha256 "10692c4b2543658c13c20879528a000998015628cb58b11d89edd098ed2e33ce"
   license "MIT"
   head "https://github.com/bucabay/seal.git", branch: "main"
 
@@ -36,6 +36,8 @@ class Seal < Formula
 
   test do
     system "#{bin}/seal", "--help"
-    assert_predicate share/"seal/skills/seal/SKILL.md", :exist?
+    # Guards against the formula and the installed binary drifting apart.
+    assert_match version.to_s, shell_output("#{bin}/seal --version")
+    assert_path_exists share/"seal/skills/seal/SKILL.md"
   end
 end
