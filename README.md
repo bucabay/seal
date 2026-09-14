@@ -12,8 +12,9 @@ system's native keychain — no secrets file to protect, no sync to trust.
 ## Features
 
 - **CLI** — `seal set/get/delete/list` for scripting and terminal use
-- **GUI** — Tauri app (macOS / Windows / Linux) with a vault selector, secret
-  list, reveal/copy/delete, dark & light themes
+- **GUI** — Tauri app (macOS / Windows / Linux) with vault and environment
+  selectors, a secret list with inline editing that saves itself, reveal, copy,
+  delete, and dark & light themes
 - **Vaults** — group secrets by project (`hardroad/db_pass` = vault `hardroad`,
   key `db_pass`)
 - **Environments** — per-vault overlays (`dev`, `staging`, `production`) that

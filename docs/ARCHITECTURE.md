@@ -82,16 +82,51 @@ keychain::delete(account: &str)           -> Result<(), String>
 
 ### Frontend (`src/`)
 
-- `App.tsx` — top-level state (vaults, current vault, secrets, user session,
-  dialog state) and the secret list.
-- `components/header.tsx` — logo, vault selector, theme toggle, user menu.
+- `App.tsx` — top-level state (vaults, current vault, environments, secrets,
+  revealed values, local edits, user session, dialog state) and the secret list.
+- `components/header.tsx` — logo, vault selector, environment selector, theme
+  toggle, user menu.
 - `components/vault-selector.tsx` — dropdown listing vaults + "Add vault".
+- `components/env-selector.tsx` — dropdown listing environments with what each
+  extends, plus create and delete.
+- `components/secret-row.tsx` — one row: name, inherited badge, the editable
+  value field, its save status, and reveal / copy / delete.
 - `components/user-menu.tsx` — avatar menu (sign in / sign out).
-- `components/login-dialog.tsx`, `add-vault-dialog.tsx` — dialogs.
+- `components/login-dialog.tsx`, `add-vault-dialog.tsx`,
+  `add-env-dialog.tsx` — dialogs.
+- `hooks/use-autosave.ts` — per-row debounced writes (see below).
 - `hooks/use-theme.tsx` — dark/light theme with localStorage persistence.
 - `hooks/use-user.ts` — fake user session (login UI only; sync is stubbed).
 - `components/ui/` — ShadCN primitives (button, dialog, dropdown-menu, avatar,
   input, label, separator).
+
+#### Editing and autosave
+
+A revealed value is an input; a hidden one is not. Typing over dots you cannot
+read is how the wrong secret gets stored silently, so the field is read-only
+until the value is on screen, and clicking it reveals rather than focuses.
+
+Writes are debounced per row (700 ms), which keeps one slow save from delaying
+another. Two rules make the delay safe:
+
+- **The destination travels with the edit.** Each queued write carries its own
+  vault, environment and key, captured when the keystroke happened, so nothing
+  about where it lands is read at write time. Switching vault or environment
+  mid-debounce cannot redirect a save.
+- **Nothing queued is dropped silently.** A queued write is flushed on blur, on
+  Enter, when the window loses focus, and before the list it came from is
+  replaced by a vault or environment switch. Escape discards the edit
+  explicitly, and a failed write leaves the text in place and marks the row
+  `failed` rather than pretending it stored.
+
+An empty field is treated as a half-finished edit: it is held and marked
+`empty`, never written, since storing an empty secret is almost always a typo
+rather than an intent.
+
+Editing an inherited value writes it into the environment being viewed, turning
+it into that environment's own override — the GUI equivalent of
+`seal set <key> -e <env>`. The row loses its inherited badge and the counts
+follow, so the fork is visible rather than implied.
 
 ## Storage model
 
