@@ -468,18 +468,12 @@ fn cmd_set(args: &Args) {
     let Some(reference) = args.rest.first() else {
         die("set needs a reference, e.g. stripe/sk_live")
     };
-    let mut value = String::new();
-    if std::io::stdin().is_terminal() {
-        eprint!(
-            "value for {} (input is not echoed by your terminal if piped): ",
-            reference
-        );
-        std::io::stderr().flush().ok();
-    }
-    std::io::stdin()
-        .read_to_string(&mut value)
-        .unwrap_or_else(|e| die(format!("reading value: {}", e)));
-    let value = value.trim_end_matches('\n').to_string();
+
+    // Typing at a prompt used to echo the value into the terminal's scrollback,
+    // where it stays. Reading it without echo is the whole point of asking.
+    let value = keymaker_core::tty::read_secret_or_stdin(&format!("value for {}: ", reference))
+        .unwrap_or_else(|e| die(e));
+
     if value.is_empty() {
         die("refusing to store an empty value");
     }

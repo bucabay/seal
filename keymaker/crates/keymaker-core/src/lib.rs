@@ -34,5 +34,6 @@ pub mod server;
 pub mod sigv4;
 pub mod store;
 pub mod transport;
+pub mod tty;
 
 pub use error::{Error, HandleError, Result};

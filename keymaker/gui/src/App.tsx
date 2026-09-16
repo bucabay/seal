@@ -26,6 +26,7 @@ import {
 } from "@/lib/api";
 import { cn, describeEvent, when } from "@/lib/utils";
 import { SecretRow } from "@/components/secret-row";
+import { AddSecret } from "@/components/add-secret";
 
 type Tab = "secrets" | "approvals" | "tasks" | "endpoints" | "audit";
 
@@ -232,10 +233,12 @@ export default function App() {
               title="Secrets"
               note={`${refs.filter((r) => r.present).length} of ${refs.length} stored here`}
             >
+              <AddSecret onAdded={() => void refresh()} />
               {refs.length === 0 ? (
                 <Empty>
-                  Nothing yet. References appear here once a .keymaker manifest or an
-                  endpoint definition mentions them.
+                  Nothing stored yet, and no manifest in view. Add a secret above, or
+                  start Keymaker from a project directory to see the references its
+                  .keymaker asks for.
                 </Empty>
               ) : (
                 refs.map((r) => (
