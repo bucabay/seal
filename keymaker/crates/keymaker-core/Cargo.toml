@@ -14,12 +14,15 @@ toml.workspace = true
 sha2.workspace = true
 hmac.workspace = true
 ureq = { workspace = true, optional = true }
+ring = { workspace = true, optional = true }
 
 [features]
-default = ["http"]
+default = ["http", "jwt"]
 # The real network transport. Off, the broker still builds and every
 # structural check still runs; only sending is unavailable.
 http = ["dep:ureq"]
+# RS256 signing, for exchanges that need a signed assertion (GitHub Apps).
+jwt = ["dep:ring"]
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true

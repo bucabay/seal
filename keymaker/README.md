@@ -58,6 +58,9 @@ keymaker call stripe.refund '{"amount": 500, "charge": "ch_1"}'
 # Send a request built from a pinned endpoint definition.
 keymaker call github.issue_create '{"title": "from an agent"}'
 
+# Answer something an agent is blocked on.
+keymaker approve                  # or use the GUI's Approvals tab
+
 # Names only — never values.
 keymaker list
 keymaker audit --verify           # the trail, and proof it has not been edited
@@ -123,6 +126,24 @@ let outcome = runner.run_task(&manifest, "deploy", "production")?;
 println!("{}", outcome.stdout_string());   // already redacted
 ```
 
+## Short-lived credentials
+
+Where a provider will mint one, keymaker exchanges the long-lived secret for a
+credential that expires — and then a stolen value is worthless before it is
+useful, without having to close a single exfiltration channel:
+
+| Provider | Stored secret | What the task gets |
+|---|---|---|
+| AWS | access key | an STS role session, signed for with SigV4 |
+| GitHub | App private key | an installation token, an hour, narrowable to one repo |
+| Any RFC 8693 STS | subject token | a scope-, audience- and time-narrowed token |
+
+In each case the stored secret signs or is exchanged; it never travels.
+
+A static API key has nothing to shorten, and for those the broker (mechanism 2)
+is the only answer. `Acquired` says which of the two happened in the type, so a
+static fallback is never silently glossed.
+
 ## What is honest about this
 
 - The jail is an enforcement layer, not a proof. It does not survive local root,
@@ -138,7 +159,7 @@ Limits are stated in full in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 ## Status
 
 Early. See [docs/PLAN.md](docs/PLAN.md) for exactly what is built and what is
-not. 203 tests, `cargo test --workspace`.
+not. 331 tests, `cargo test --workspace`.
 
 ## License
 

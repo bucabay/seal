@@ -19,6 +19,9 @@ serde_json = "1"
 toml = "0.8"
 sha2 = "0.10"
 hmac = "0.12"
+# Already in the tree via rustls, so this adds no new crypto implementation.
+# Used only for the RS256 signature a GitHub App token exchange requires.
+ring = "0.17"
 libc = "0.2"
 keyring = { version = "3", default-features = false, features = ["sync-secret-service", "windows-native", "vendored"] }
 ureq = { version = "2", default-features = false, features = ["tls", "json"] }

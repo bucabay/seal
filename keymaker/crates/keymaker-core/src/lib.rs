@@ -19,6 +19,7 @@ pub mod gui;
 pub mod handle;
 pub mod id;
 pub mod jail;
+pub mod jwt;
 pub mod landlock;
 pub mod manifest;
 pub mod mcp;

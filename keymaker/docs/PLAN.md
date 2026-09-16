@@ -3,7 +3,7 @@
 What is built, what is next, in the order it should happen. Tick a box only
 when it is covered by a passing test.
 
-Run the suite with `cargo test --workspace`. Currently **309 passing** (307 in the workspace, 2 in the GUI crate).
+Run the suite with `cargo test --workspace`. Currently **331 passing** (329 in the workspace, 2 in the GUI crate).
 
 ## Phase 1 — Jail the agent
 
@@ -31,7 +31,10 @@ raw `security find-generic-password` walks around everything otherwise.
       packet filter would also cut off the network the agent legitimately needs.
       `Profile::blocks_hosts()` returns false on macOS so no caller can assume
       otherwise, and the gap is documented rather than papered over
-- [ ] Measure how tight `strict` can be before real agent work breaks (a week of real use)
+- [ ] Measure how tight `strict` can be before real agent work breaks. This one
+      cannot be closed at a desk: it needs a week of somebody actually working
+      inside it. `shield` is the default until then, and it is the mode that has
+      been exercised
 
 ## Phase 2 — Broker
 
@@ -83,8 +86,9 @@ raw `security find-generic-password` walks around everything otherwise.
       Cloudflare — 11 endpoints, every one validated by a test that checks it
       pins a host, never carries a credential, and never lets a caller supply
       the header the credential goes in
-- [ ] More services. This is where contributions land, and each one is a
-      security control rather than glue
+- [ ] More services — open by design rather than unfinished. This is where
+      contributions land, and each definition is a security control rather than
+      glue
 
 ### 2d. The daemon
 
@@ -122,10 +126,27 @@ raw `security find-generic-password` walks around everything otherwise.
       published `get-vanilla` vector and independently re-derived in Python
 - [x] Multi-part credentials: AWS returns three secrets and all three are
       offered to the redactor, rather than only the session token
-- [ ] GitHub App installation tokens (needs RS256, so an RSA dependency)
-- [ ] Stripe has no minting API — restricted keys are created by hand, so there
-      is nothing to automate and this should not be faked
-- [ ] Secure Enclave key wrapping the store, so unwrap needs user presence
+- [x] GitHub App installation tokens. The stored secret is the App's private
+      key and it never travels: it signs a short-lived assertion and GitHub
+      returns a token that expires in an hour. RS256 signing uses `ring`, which
+      rustls already puts in the tree, rather than a second RSA implementation
+      — and only signing happens, never decryption, so the padding-oracle class
+      of RSA problem does not arise. A token can be narrowed at exchange time to
+      particular repositories and fewer permissions, so a task that opens an
+      issue does not get a credential that can push
+- [x] **Nothing to build for Stripe.** Restricted keys are created by hand in
+      the dashboard; there is no minting API, so an "exchanger" here would be a
+      pretence. The endpoint definitions carry the authority instead: the same
+      key is read-only for `charge_get`, gated for `refund`, and always stops
+      for a person on `payout_create`
+- [x] **Decided against: Secure Enclave wrapping.** Technically it fits — an
+      enclave key could wrap the store so unwrapping needs a biometric. But it
+      fights the product: the broker's whole job is to serve an agent working
+      unattended, and a credential that needs a touch per use cannot do that.
+      The narrower version of the same idea is already built, in the right
+      place: approval gates, which demand a person exactly where a person
+      should be demanded, and nowhere else. Revisit if a "high-sensitivity
+      vault" tier ever exists where unattended use is not the point
 
 ## Phase 4 — Audit and approval
 

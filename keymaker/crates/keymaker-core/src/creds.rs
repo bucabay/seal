@@ -1271,3 +1271,377 @@ mod sts_tests {
         );
     }
 }
+
+/// GitHub App installation tokens.
+///
+/// The stored secret is the App's private key, and it is never sent anywhere:
+/// it signs a short-lived assertion, GitHub returns an installation token that
+/// expires in an hour, and the task gets the token.
+///
+/// The token can be narrowed further at exchange time — to particular
+/// repositories, or to fewer permissions than the installation has — so a task
+/// that only needs to open an issue does not get a credential that can push.
+#[derive(Debug, Clone)]
+pub struct GitHubAppExchanger {
+    pub prefix: String,
+    pub app_id: String,
+    pub installation_id: String,
+    /// Narrow the token to these repositories. Empty means the whole
+    /// installation, which is usually more than a task needs.
+    pub repositories: Vec<String>,
+    /// Narrow the permissions, e.g. `issues` -> `write`.
+    pub permissions: std::collections::BTreeMap<String, String>,
+}
+
+impl GitHubAppExchanger {
+    pub fn new(
+        prefix: impl Into<String>,
+        app_id: impl Into<String>,
+        installation_id: impl Into<String>,
+    ) -> Self {
+        GitHubAppExchanger {
+            prefix: prefix.into(),
+            app_id: app_id.into(),
+            installation_id: installation_id.into(),
+            repositories: Vec::new(),
+            permissions: Default::default(),
+        }
+    }
+
+    pub fn for_repositories<S: Into<String>>(mut self, repos: Vec<S>) -> Self {
+        self.repositories = repos.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn with_permission(mut self, scope: impl Into<String>, level: impl Into<String>) -> Self {
+        self.permissions.insert(scope.into(), level.into());
+        self
+    }
+
+    pub fn endpoint(&self) -> String {
+        format!(
+            "https://api.github.com/app/installations/{}/access_tokens",
+            self.installation_id
+        )
+    }
+
+    /// The assertion GitHub checks. Backdated a minute because GitHub rejects
+    /// a `iat` in its own future, and clocks disagree.
+    pub fn claims(&self, now: u64) -> serde_json::Value {
+        serde_json::json!({
+            "iat": now.saturating_sub(60),
+            // GitHub caps this at ten minutes; nine leaves room for clock skew.
+            "exp": now + 540,
+            "iss": self.app_id,
+        })
+    }
+
+    pub fn body(&self) -> Option<String> {
+        if self.repositories.is_empty() && self.permissions.is_empty() {
+            return None;
+        }
+        let mut obj = serde_json::Map::new();
+        if !self.repositories.is_empty() {
+            obj.insert("repositories".into(), serde_json::json!(self.repositories));
+        }
+        if !self.permissions.is_empty() {
+            obj.insert("permissions".into(), serde_json::json!(self.permissions));
+        }
+        serde_json::to_string(&serde_json::Value::Object(obj)).ok()
+    }
+
+    pub fn parse_reply(&self, body: &str, req: &ExchangeRequest, now: u64) -> Result<ShortLived> {
+        let v: serde_json::Value = serde_json::from_str(body)
+            .map_err(|e| Error::Store(format!("GitHub returned invalid JSON: {}", e)))?;
+
+        if let Some(message) = v.get("message").and_then(|m| m.as_str()) {
+            return Err(Error::Denied(format!("GitHub refused: {}", message)));
+        }
+        let token = v
+            .get("token")
+            .and_then(|t| t.as_str())
+            .filter(|t| !t.is_empty())
+            .ok_or_else(|| Error::Store("GitHub returned no token".into()))?;
+
+        // GitHub states the expiry outright. Trust it over the requested TTL,
+        // but fall back rather than claiming a lifetime that was not given.
+        let expires_at = v
+            .get("expires_at")
+            .and_then(|e| e.as_str())
+            .and_then(crate::jwt::parse_rfc3339)
+            .unwrap_or(now + req.ttl.min(3_600));
+
+        let scopes = v
+            .get("permissions")
+            .and_then(|p| p.as_object())
+            .map(|m| {
+                m.iter()
+                    // A JSON string Displays with its quotes, which is not what
+                    // a person reading a scope list wants to see.
+                    .map(|(k, v)| match v.as_str() {
+                        Some(level) => format!("{}:{}", k, level),
+                        None => format!("{}:{}", k, v),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok(ShortLived {
+            value: Secret::new(token),
+            expires_at,
+            scopes,
+            audience: req.audience.clone(),
+            parts: Default::default(),
+        })
+    }
+}
+
+/// [`GitHubAppExchanger`] with a way to reach GitHub.
+#[derive(Debug)]
+pub struct HttpGitHubAppExchanger<'a> {
+    pub inner: GitHubAppExchanger,
+    transport: &'a dyn crate::broker::Transport,
+}
+
+impl<'a> HttpGitHubAppExchanger<'a> {
+    pub fn new(inner: GitHubAppExchanger, transport: &'a dyn crate::broker::Transport) -> Self {
+        HttpGitHubAppExchanger { inner, transport }
+    }
+}
+
+impl Exchanger for HttpGitHubAppExchanger<'_> {
+    fn handles(&self, base_ref: &str) -> bool {
+        base_ref.starts_with(&self.inner.prefix)
+    }
+
+    fn exchange(&self, base: &Secret, req: &ExchangeRequest, now: u64) -> Result<ShortLived> {
+        // The private key signs; it is never transmitted.
+        let assertion = crate::jwt::sign_rs256(&self.inner.claims(now), base.expose())?;
+
+        let mut headers = std::collections::BTreeMap::new();
+        headers.insert("Authorization".to_string(), format!("Bearer {}", assertion));
+        headers.insert(
+            "Accept".to_string(),
+            "application/vnd.github+json".to_string(),
+        );
+        headers.insert("X-GitHub-Api-Version".to_string(), "2022-11-28".to_string());
+        headers.insert("User-Agent".to_string(), "keymaker".to_string());
+
+        let prepared = crate::provider::PreparedRequest {
+            method: "POST".into(),
+            url: self.inner.endpoint(),
+            headers,
+            body: self.inner.body(),
+            content_type: "application/json",
+        };
+
+        let resp = self.transport.send(&prepared)?;
+        if resp.status >= 500 {
+            return Err(Error::Store(format!("GitHub returned {}", resp.status)));
+        }
+        self.inner.parse_reply(&resp.body, req, now)
+    }
+}
+
+#[cfg(test)]
+mod github_tests {
+    use super::*;
+    use crate::broker::{HttpResponse, Transport};
+    use crate::clock::FixedClock;
+    use crate::provider::PreparedRequest;
+    use crate::store::MemoryStore;
+    use std::cell::RefCell;
+
+    const TEST_KEY: &str = include_str!("../tests/data/test_key.pem");
+
+    #[derive(Debug)]
+    struct FakeGitHub {
+        reply: HttpResponse,
+        sent: RefCell<Vec<PreparedRequest>>,
+    }
+    impl FakeGitHub {
+        fn returning(status: u16, body: &str) -> Self {
+            FakeGitHub {
+                reply: HttpResponse {
+                    status,
+                    body: body.into(),
+                },
+                sent: RefCell::new(Vec::new()),
+            }
+        }
+    }
+    impl Transport for FakeGitHub {
+        fn send(&self, req: &PreparedRequest) -> Result<HttpResponse> {
+            self.sent.borrow_mut().push(req.clone());
+            Ok(self.reply.clone())
+        }
+    }
+
+    fn store() -> MemoryStore {
+        MemoryStore::with([("github/app_key", TEST_KEY)])
+    }
+
+    fn req() -> ExchangeRequest {
+        ExchangeRequest::new("github/app_key", "api.github.com", 3_600)
+    }
+
+    const REPLY: &str = r#"{
+        "token": "ghs_installationtoken",
+        "expires_at": "2026-09-16T13:00:00Z",
+        "permissions": { "issues": "write" }
+    }"#;
+
+    #[test]
+    fn an_installation_token_is_minted_and_the_private_key_is_never_sent() {
+        let gh = FakeGitHub::returning(201, REPLY);
+        let c = FixedClock::new(1_789_000_000);
+        let s = store();
+        let src = Source::new(&s, &c).with_exchanger(Box::new(HttpGitHubAppExchanger::new(
+            GitHubAppExchanger::new("github/", "12345", "67890"),
+            &gh,
+        )));
+
+        let got = src.acquire(&req()).unwrap();
+        assert!(got.is_ephemeral());
+        assert_eq!(got.value().expose(), "ghs_installationtoken");
+
+        let sent = gh.sent.borrow();
+        let rendered = format!("{:?}", sent[0]);
+        assert!(
+            !rendered.contains("PRIVATE KEY"),
+            "the App private key must sign, not travel"
+        );
+        assert!(sent[0].headers["Authorization"].starts_with("Bearer eyJ"));
+        assert_eq!(
+            sent[0].url,
+            "https://api.github.com/app/installations/67890/access_tokens"
+        );
+    }
+
+    #[test]
+    fn githubs_stated_expiry_is_used_rather_than_the_requested_one() {
+        let gh = FakeGitHub::returning(201, REPLY);
+        let c = FixedClock::new(1_789_000_000);
+        let s = store();
+        let src = Source::new(&s, &c).with_exchanger(Box::new(HttpGitHubAppExchanger::new(
+            GitHubAppExchanger::new("github/", "12345", "67890"),
+            &gh,
+        )));
+
+        let Acquired::Minted(m) = src.acquire(&req()).unwrap() else {
+            panic!()
+        };
+        // 2026-09-16T13:00:00Z
+        assert_eq!(m.expires_at, 1_789_563_600);
+        assert_eq!(m.scopes, vec!["issues:write"]);
+    }
+
+    #[test]
+    fn a_token_can_be_narrowed_to_fewer_repositories_and_permissions() {
+        let gh = FakeGitHub::returning(201, REPLY);
+        let c = FixedClock::new(0);
+        let s = store();
+        let app = GitHubAppExchanger::new("github/", "12345", "67890")
+            .for_repositories(vec!["seal"])
+            .with_permission("issues", "write");
+        let src =
+            Source::new(&s, &c).with_exchanger(Box::new(HttpGitHubAppExchanger::new(app, &gh)));
+        src.acquire(&req()).unwrap();
+
+        let sent = gh.sent.borrow();
+        let body: serde_json::Value = serde_json::from_str(sent[0].body.as_ref().unwrap()).unwrap();
+        assert_eq!(body["repositories"], serde_json::json!(["seal"]));
+        assert_eq!(body["permissions"]["issues"], "write");
+    }
+
+    #[test]
+    fn an_unnarrowed_exchange_sends_no_body() {
+        let app = GitHubAppExchanger::new("github/", "1", "2");
+        assert!(app.body().is_none(), "no narrowing means no body to send");
+    }
+
+    #[test]
+    fn the_assertion_is_backdated_and_short() {
+        let app = GitHubAppExchanger::new("github/", "12345", "67890");
+        let claims = app.claims(1_000_000);
+        assert_eq!(claims["iat"], 999_940, "backdated against clock skew");
+        assert_eq!(claims["exp"], 1_000_540, "under GitHub's ten-minute cap");
+        assert_eq!(claims["iss"], "12345");
+
+        // And it does not underflow near the epoch.
+        assert_eq!(app.claims(10)["iat"], 0);
+    }
+
+    #[test]
+    fn a_github_refusal_is_reported_rather_than_parsed_as_success() {
+        let gh = FakeGitHub::returning(
+            404,
+            r#"{"message":"Integration not found","documentation_url":"..."}"#,
+        );
+        let c = FixedClock::new(0);
+        let s = store();
+        let src = Source::new(&s, &c).with_exchanger(Box::new(HttpGitHubAppExchanger::new(
+            GitHubAppExchanger::new("github/", "12345", "67890"),
+            &gh,
+        )));
+
+        match src.acquire(&req()) {
+            Err(Error::Denied(m)) => assert!(m.contains("Integration not found")),
+            other => panic!("expected a refusal, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn a_reply_with_no_token_is_an_error() {
+        let c = FixedClock::new(0);
+        let s = store();
+        for body in [r#"{}"#, r#"{"token":""}"#, "not json"] {
+            let gh = FakeGitHub::returning(201, body);
+            let src = Source::new(&s, &c).with_exchanger(Box::new(HttpGitHubAppExchanger::new(
+                GitHubAppExchanger::new("github/", "1", "2"),
+                &gh,
+            )));
+            assert!(
+                src.acquire(&req()).is_err(),
+                "`{}` must not yield a token",
+                body
+            );
+        }
+    }
+
+    #[test]
+    fn a_missing_expiry_falls_back_without_claiming_a_long_life() {
+        let gh = FakeGitHub::returning(201, r#"{"token":"ghs_x"}"#);
+        let c = FixedClock::new(1_000);
+        let s = store();
+        let src = Source::new(&s, &c).with_exchanger(Box::new(HttpGitHubAppExchanger::new(
+            GitHubAppExchanger::new("github/", "1", "2"),
+            &gh,
+        )));
+        let Acquired::Minted(m) = src.acquire(&req()).unwrap() else {
+            panic!()
+        };
+        assert_eq!(
+            m.expires_at,
+            1_000 + 3_600,
+            "capped at GitHub's own maximum"
+        );
+    }
+
+    #[test]
+    fn a_key_that_is_not_a_key_fails_before_anything_is_sent() {
+        let gh = FakeGitHub::returning(201, REPLY);
+        let c = FixedClock::new(0);
+        let s = MemoryStore::with([("github/app_key", "not a pem key")]);
+        let src = Source::new(&s, &c).with_exchanger(Box::new(HttpGitHubAppExchanger::new(
+            GitHubAppExchanger::new("github/", "1", "2"),
+            &gh,
+        )));
+
+        assert!(src.acquire(&req()).is_err());
+        assert!(
+            gh.sent.borrow().is_empty(),
+            "nothing may be sent without a signature"
+        );
+    }
+}
