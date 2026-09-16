@@ -8,8 +8,10 @@
 use crate::error::{Error, Result};
 use crate::manifest::Manifest;
 use crate::redact::Redactor;
+use crate::scan::{Finding, Watcher};
 use crate::store::SecretStore;
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawOutcome {
@@ -27,6 +29,12 @@ pub struct Outcome {
     /// True when a value survived into output and was masked. Worth surfacing:
     /// it means the task is printing its credentials.
     pub redacted: bool,
+    /// Files the task wrote that contain an injected value. Redaction only sees
+    /// what a task prints; this is what it wrote.
+    pub files_with_values: Vec<PathBuf>,
+    /// True when the scan stopped early, so an empty `files_with_values` means
+    /// "nothing found in what was searched", not "nothing written".
+    pub scan_incomplete: bool,
 }
 
 impl Outcome {
@@ -70,11 +78,39 @@ impl Spawner for ProcessSpawner {
 pub struct Runner<'a> {
     store: &'a dyn SecretStore,
     spawner: &'a dyn Spawner,
+    /// Directories checked after a run for values the task wrote. Empty means
+    /// no scanning, which is the default: a caller has to say where it is
+    /// reasonable to look.
+    watch_roots: Vec<PathBuf>,
 }
 
 impl<'a> Runner<'a> {
     pub fn new(store: &'a dyn SecretStore, spawner: &'a dyn Spawner) -> Self {
-        Runner { store, spawner }
+        Runner {
+            store,
+            spawner,
+            watch_roots: Vec::new(),
+        }
+    }
+
+    /// Check these directories after a run for values the task wrote to disk.
+    ///
+    /// The agent is blocked while the task runs, so this is the one window in
+    /// which the broker is the only party to have seen what was written.
+    pub fn watching(mut self, roots: Vec<PathBuf>) -> Self {
+        self.watch_roots = roots;
+        self
+    }
+
+    /// Watch the working directory and the temp directory, which is where a
+    /// task writes by accident.
+    pub fn watching_defaults(self) -> Self {
+        let mut roots = Vec::new();
+        if let Ok(cwd) = std::env::current_dir() {
+            roots.push(cwd);
+        }
+        roots.push(std::env::temp_dir());
+        self.watching(roots)
     }
 
     /// Run a task the manifest names. An unknown task is refused; there is no
@@ -117,14 +153,33 @@ impl<'a> Runner<'a> {
         }
 
         let redactor = Redactor::new(&values);
+
+        // Started before the spawn so that anything the task writes counts.
+        let watcher =
+            (!self.watch_roots.is_empty()).then(|| Watcher::begin(self.watch_roots.clone()));
+
         let raw = self.spawner.spawn(command, &env)?;
         let redacted = redactor.detects(&raw.stdout) || redactor.detects(&raw.stderr);
+
+        let (files_with_values, scan_incomplete) = match &watcher {
+            Some(w) => {
+                let found: Vec<PathBuf> = w
+                    .findings(&redactor)
+                    .into_iter()
+                    .map(|Finding { path }| path)
+                    .collect();
+                (found, w.was_truncated())
+            }
+            None => (Vec::new(), false),
+        };
 
         Ok(Outcome {
             exit_code: raw.exit_code,
             stdout: redactor.redact(&raw.stdout),
             stderr: redactor.redact(&raw.stderr),
             redacted,
+            files_with_values,
+            scan_incomplete,
         })
     }
 }
@@ -328,6 +383,70 @@ DATABASE_URL = "hardroad/db_url"
         // The value reached the child, and came back masked.
         assert!(out.redacted);
         assert_eq!(out.stdout_string(), "[redacted]");
+    }
+
+    #[test]
+    fn a_task_that_writes_a_secret_to_a_file_is_caught() {
+        let dir = std::env::temp_dir().join(format!("km-run-scan-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let s = store();
+        let sp = ProcessSpawner;
+        let mut man = manifest();
+        let target = dir.join(".env");
+        man.tasks.insert(
+            "leak_to_file".into(),
+            format!("printf 'URL=%s' \"$DATABASE_URL\" > {}", target.display()),
+        );
+
+        let out = Runner::new(&s, &sp)
+            .watching(vec![dir.clone()])
+            .run_task(&man, "leak_to_file", "production")
+            .unwrap();
+
+        assert!(out.success());
+        assert_eq!(
+            out.files_with_values,
+            vec![target],
+            "a credential written to disk must be reported"
+        );
+        assert!(!out.scan_incomplete);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_task_that_writes_nothing_sensitive_is_not_flagged() {
+        let dir = std::env::temp_dir().join(format!("km-run-clean-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let s = store();
+        let sp = ProcessSpawner;
+        let mut man = manifest();
+        man.tasks.insert(
+            "write_log".into(),
+            format!("echo 'all good' > {}", dir.join("out.log").display()),
+        );
+
+        let out = Runner::new(&s, &sp)
+            .watching(vec![dir.clone()])
+            .run_task(&man, "write_log", "production")
+            .unwrap();
+
+        assert!(out.files_with_values.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scanning_is_off_unless_a_root_is_given() {
+        let s = store();
+        let sp = FakeSpawner::new("ok");
+        let out = Runner::new(&s, &sp)
+            .run_task(&manifest(), "deploy", "production")
+            .unwrap();
+        assert!(out.files_with_values.is_empty());
+        assert!(!out.scan_incomplete);
     }
 
     #[test]

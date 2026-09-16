@@ -23,6 +23,7 @@ keymaker — secrets your agent can use but never read
 
 USAGE
   keymaker serve                   run the broker; the only holder of plaintext
+  keymaker mcp                     speak MCP on stdio, for an agent to connect to
   keymaker jail -- <command>        run a command confined; it cannot reach the store
   keymaker jail --print            print the sandbox profile that would be applied
   keymaker run <task> [-e <env>]   run a task named in .keymaker
@@ -185,7 +186,7 @@ fn cmd_run(args: &Args) {
     let mut manifest = load_manifest(&args.manifest);
     let store = open_store();
     let spawner = ProcessSpawner;
-    let runner = Runner::new(store.as_ref(), &spawner);
+    let runner = Runner::new(store.as_ref(), &spawner).watching_defaults();
 
     let sep = args.rest.iter().position(|a| a == "--");
     let outcome = match sep {
@@ -229,6 +230,9 @@ fn cmd_run(args: &Args) {
             if out.redacted {
                 eprintln!("keymaker: a value was printed by this task and has been masked");
             }
+            for f in &out.files_with_values {
+                eprintln!("keymaker: this task wrote a credential to {}", f.display());
+            }
             std::process::exit(out.exit_code.unwrap_or(1));
         }
         Err(e) => die(e),
@@ -264,11 +268,15 @@ fn report(resp: keymaker_core::protocol::Response) -> ! {
             stdout,
             stderr,
             redacted,
+            leaked_files,
         } => {
             print!("{}", stdout);
             eprint!("{}", stderr);
             if redacted {
                 eprintln!("keymaker: a value was printed by this task and has been masked");
+            }
+            for f in &leaked_files {
+                eprintln!("keymaker: this task wrote a credential to {}", f);
             }
             std::process::exit(exit_code.unwrap_or(1));
         }
@@ -544,6 +552,50 @@ fn cmd_serve(args: &Args) {
     }
 }
 
+fn cmd_mcp(args: &Args) {
+    use keymaker_core::broker::Broker;
+    use keymaker_core::id::OsEntropy;
+    use keymaker_core::mcp::{serve_stdio, LocalDispatcher};
+
+    // Prefer a real daemon: there the broker is a separate process, so a bug
+    // in the MCP surface cannot reach the plaintext it holds.
+    if let Some(client) = broker_client() {
+        if let Err(e) = serve_stdio(client) {
+            die(e);
+        }
+        return;
+    }
+
+    eprintln!("keymaker: no broker running; serving MCP in-process.");
+    eprintln!("keymaker: start `keymaker serve` for the stronger arrangement.");
+
+    let clock = SystemClock;
+    let entropy = OsEntropy;
+    let store = open_store();
+    let spawner = ProcessSpawner;
+    let transport = keymaker_core::transport::HttpTransport::default();
+    let broker = Broker::new(
+        &clock,
+        &entropy,
+        store.as_ref(),
+        &spawner,
+        &transport,
+        load_manifest(&args.manifest),
+        load_catalog(),
+        60,
+    );
+    let peer = keymaker_core::peer::PeerIdentity {
+        uid: keymaker_core::peer::current_uid(),
+        gid: 0,
+        pid: std::process::id() as i32,
+        start_time: None,
+        cwd: std::env::current_dir().ok(),
+    };
+    if let Err(e) = serve_stdio(LocalDispatcher::new(broker, peer)) {
+        die(e);
+    }
+}
+
 /// Connect to a running broker, if there is one.
 fn broker_client() -> Option<keymaker_core::server::Client> {
     let path = keymaker_core::server::default_socket_path();
@@ -563,6 +615,7 @@ fn main() {
 
     match command.as_str() {
         "serve" => cmd_serve(&args),
+        "mcp" => cmd_mcp(&args),
         "jail" => cmd_jail(&args),
         "run" => cmd_run(&args),
         "call" => cmd_call(&args),

@@ -325,7 +325,9 @@ impl<'a> Broker<'a> {
             Ok(c) => c.to_string(),
             Err(e) => return Response::from(&e),
         };
-        let runner = Runner::new(self.store, self.spawner);
+        // The agent is blocked while this runs, so this is the window in which
+        // the broker is the only party to have seen what the task wrote.
+        let runner = Runner::new(self.store, self.spawner).watching_defaults();
         match runner.run_task(&self.manifest, &task, env) {
             Ok(out) => {
                 self.audit.append(Event::TaskRun {
@@ -338,11 +340,21 @@ impl<'a> Broker<'a> {
                         where_: format!("task `{}` output", task),
                     });
                 }
+                for path in &out.files_with_values {
+                    self.audit.append(Event::LeakDetected {
+                        where_: format!("file written by `{}`: {}", task, path.display()),
+                    });
+                }
                 Response::Ran {
                     exit_code: out.exit_code,
                     stdout: out.stdout_string(),
                     stderr: out.stderr_string(),
                     redacted: out.redacted,
+                    leaked_files: out
+                        .files_with_values
+                        .iter()
+                        .map(|p| p.display().to_string())
+                        .collect(),
                 }
             }
             Err(e) => Response::from(&e),

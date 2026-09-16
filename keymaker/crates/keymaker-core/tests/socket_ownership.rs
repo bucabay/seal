@@ -12,8 +12,10 @@ use std::path::PathBuf;
 struct TempDir(PathBuf);
 
 impl TempDir {
-    fn new() -> TempDir {
-        let dir = std::env::temp_dir().join(format!("km-own-{}", std::process::id()));
+    /// `tag` keeps the two tests in this file apart: they run in parallel
+    /// threads, and a shared directory means each wipes the other's socket.
+    fn new(tag: &str) -> TempDir {
+        let dir = std::env::temp_dir().join(format!("km-own-{}-{}", std::process::id(), tag));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         TempDir(dir)
@@ -31,7 +33,7 @@ impl Drop for TempDir {
 
 #[test]
 fn a_socket_is_owned_by_one_broker_and_released_when_it_exits() {
-    let dir = TempDir::new();
+    let dir = TempDir::new("owned");
     let path = dir.sock();
 
     let first = bind(&path).expect("the first broker should bind");
@@ -56,7 +58,7 @@ fn a_socket_is_owned_by_one_broker_and_released_when_it_exits() {
 
 #[test]
 fn a_socket_file_left_by_a_crashed_broker_does_not_block_startup() {
-    let dir = TempDir::new();
+    let dir = TempDir::new("crashed");
     let path = dir.0.join("crashed.sock");
 
     // A crash leaves the file on disk with no lock held.

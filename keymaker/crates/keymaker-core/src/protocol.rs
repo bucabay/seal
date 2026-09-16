@@ -65,6 +65,10 @@ pub enum Response {
         stderr: String,
         /// True when a value appeared in output and was masked.
         redacted: bool,
+        /// Files the task wrote that contain an injected value. Paths only —
+        /// naming a file is not disclosing what is in it.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        leaked_files: Vec<String>,
     },
     /// A request's result. The response body has been redacted.
     Called {
@@ -183,6 +187,7 @@ mod tests {
                 stdout: "ok".into(),
                 stderr: String::new(),
                 redacted: false,
+                leaked_files: vec![],
             },
             Response::Ok,
             Response::error("denied", "nope"),
@@ -199,6 +204,7 @@ mod tests {
             stdout: "line one\nline two\n".into(),
             stderr: "err\nmore\n".into(),
             redacted: true,
+            leaked_files: vec!["/tmp/.env".into()],
         };
         let encoded = encode(&r);
         assert_eq!(
@@ -256,6 +262,7 @@ mod tests {
                 stdout: String::new(),
                 stderr: String::new(),
                 redacted: false,
+                leaked_files: vec![],
             },
             Response::Called {
                 status: 200,
