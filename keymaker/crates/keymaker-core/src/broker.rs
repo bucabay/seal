@@ -5,10 +5,10 @@
 //! in an effect or an error — never a value.
 
 use crate::approvals::Approvals;
-use crate::grants::Grants;
 use crate::audit::{Event, Log};
 use crate::clock::Clock;
 use crate::error::{Error, Result};
+use crate::grants::Grants;
 use crate::handle::{Capability, Registry, SessionId, SessionPolicy};
 use crate::id::Id;
 use crate::manifest::Manifest;
@@ -505,9 +505,11 @@ impl<'a> Broker<'a> {
             }
         }
 
-        if let Some(reference) =
-            self.ungranted(conn, &[endpoint.secret.clone()], &format!("endpoint {}", name))
-        {
+        if let Some(reference) = self.ungranted(
+            conn,
+            std::slice::from_ref(&endpoint.secret),
+            &format!("endpoint {}", name),
+        ) {
             return Response::from(&Error::Denied(format!(
                 "`{}` is not granted to this project yet; approve it with `keymaker grant`",
                 reference
