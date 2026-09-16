@@ -6,6 +6,31 @@ cargo build                    # or cargo build --release
 ./target/debug/keymaker-gui
 ```
 
+## Building a real app bundle
+
+```sh
+pnpm --dir ../../gui add -D @tauri-apps/cli@^2     # once
+../../gui/node_modules/.bin/tauri build
+```
+
+Produces `target/release/bundle/macos/Keymaker.app` and a `.dmg` beside it.
+
+Note that `beforeBuildCommand` runs from the directory **above** this one
+(`crates/`), not from here — which is why it reads `../gui` while
+`frontendDist` alongside it reads `../../gui/dist`. They look inconsistent and
+are both correct.
+
+## Where it looks for a project
+
+The GUI reads `.keymaker` and `.keymaker.endpoints.toml` from its working
+directory. Launched from Finder that is `/`, so it shows stored secrets but no
+tasks or endpoints. To point it at a project:
+
+```sh
+cd ~/code/my-project && open -na Keymaker --args .     # or:
+KEYMAKER_MANIFEST=~/code/my-project/.keymaker open -na Keymaker
+```
+
 ## Why `devUrl` is not in `tauri.conf.json`
 
 Tauri uses `devUrl` for **any** debug build, not only for `tauri dev`. With it in

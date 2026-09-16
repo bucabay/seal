@@ -5,7 +5,7 @@
   "identifier": "dev.bucabay.keymaker",
   "build": {
     "frontendDist": "../../gui/dist",
-    "beforeBuildCommand": "pnpm --dir ../../gui build"
+    "beforeBuildCommand": "pnpm --dir ../gui build"
   },
   "app": {
     "windows": [
@@ -17,11 +17,18 @@
         "minHeight": 520
       }
     ],
-    "security": { "csp": null }
+    "security": {
+      "csp": null
+    }
   },
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": ["icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"]
+    "icon": [
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
   }
 }

@@ -1725,6 +1725,7 @@ dependencies = [
  "hmac",
  "keyring",
  "libc",
+ "ring",
  "serde",
  "serde_json",
  "sha2",
