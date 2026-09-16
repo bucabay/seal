@@ -3,7 +3,7 @@
 What is built, what is next, in the order it should happen. Tick a box only
 when it is covered by a passing test.
 
-Run the suite with `cargo test --workspace`. Currently **203 passing**.
+Run the suite with `cargo test --workspace`. Currently **279 passing**.
 
 ## Phase 1 — Jail the agent
 
@@ -18,9 +18,18 @@ raw `security find-generic-password` walks around everything otherwise.
 - [x] Test that the profile is actually accepted by `sandbox-exec` — text assertions are not enough
 - [x] Test that the keychain directory is genuinely unreadable inside the jail
 - [x] `keymaker jail -- <command>` and `keymaker jail --print`
-- [ ] Linux enforcement: apply the `LandlockPlan` via Landlock + seccomp + a network namespace (currently generated, not applied)
-- [ ] Windows: decide whether there is a mechanism worth using at all
-- [ ] Metadata endpoint blocking on macOS — not expressible in sbpl; needs a packet filter or a network extension
+- [x] Linux enforcement via Landlock. Landlock only grants, so the deny-list is
+      inverted into the equivalent grant-list; that computation is tested on
+      every platform and only the syscalls are Linux-gated
+- [x] `Profile::enforcement()` reports which mechanism is available, and `jail`
+      refuses to run where there is none rather than implying protection
+- [x] Windows: no jail. There is no equivalent of Landlock or seatbelt that is
+      worth the complexity here, so `enforcement()` returns `None` and the
+      command refuses rather than pretending
+- [ ] Metadata endpoint blocking, on either platform. Not expressible in sbpl,
+      and Landlock has no network rules; a namespace with a packet filter would
+      also cut off the network the agent legitimately needs. Stated as a gap
+      rather than closed
 - [ ] Measure how tight `strict` can be before real agent work breaks (a week of real use)
 
 ## Phase 2 — Broker
@@ -34,7 +43,10 @@ raw `security find-generic-password` walks around everything otherwise.
 - [x] Unapproved commands refused before anything is read or spawned
 - [x] Output redaction, with a leak flagged rather than silently patched
 - [x] `keymaker run <task>` / `keymaker run -- <command>` / `list` / `doctor` / `set` / `rm`
-- [ ] Scan files written during a run and fail loudly if a value landed in one
+- [x] Scan files written during a run and report any that contain a value —
+      bounded by depth, count and size, skipping build and VCS directories, and
+      refusing to follow symlinks. An incomplete search says so rather than
+      looking clean
 
 ### 2b. Capability handles
 
@@ -89,16 +101,29 @@ raw `security find-generic-password` walks around everything otherwise.
 - [x] Socket ownership via `flock`, not a `connect()` probe — a listener that
       has just closed can still accept for a moment, so "is anyone there?" is
       a race and the lock is not
-- [ ] MCP surface over the same dispatch: `list`, `run`, `call`, `set`,
-      `delete`, `request_approval` — and no read tool
+- [x] MCP surface over the same dispatch: `list`, `run`, `call`, `next_turn`,
+      `request_approval` — and no read tool. `TOOLS` is a fixed list and a test
+      enumerates it, so adding anything value-shaped fails the build
+- [x] `initialize` tells the model the rule rather than leaving it to infer one
+- [x] `request_approval` reaches no dispatcher at all: an agent must not be able
+      to approve its own request
 
 ## Phase 3 — Expiry
 
 - [x] `Exchanger` trait, `Source`, minted-vs-static in the type
 - [x] TTL capping, expiry checks, rejection of an already-dead credential
 - [x] `require_ephemeral` refuses to fall back to a static value
-- [ ] Real exchangers: AWS STS `AssumeRole`, GitHub App installation tokens, Stripe restricted keys
-- [ ] RFC 8693 token exchange for anything with an STS
+- [x] RFC 8693 token exchange — the generic mechanism, working with any STS.
+      Carries `actor_token`, so "who authorised this" stays answerable. A
+      missing `expires_in` falls back to the requested TTL: unknown is not the
+      same as long
+- [x] AWS STS `AssumeRole`, with a SigV4 implementation checked against AWS's
+      published `get-vanilla` vector and independently re-derived in Python
+- [x] Multi-part credentials: AWS returns three secrets and all three are
+      offered to the redactor, rather than only the session token
+- [ ] GitHub App installation tokens (needs RS256, so an RSA dependency)
+- [ ] Stripe has no minting API — restricted keys are created by hand, so there
+      is nothing to automate and this should not be faked
 - [ ] Secure Enclave key wrapping the store, so unwrap needs user presence
 
 ## Phase 4 — Audit and approval
@@ -121,8 +146,8 @@ raw `security find-generic-password` walks around everything otherwise.
 
 - [x] In-memory (tests)
 - [x] macOS Keychain
-- [ ] Linux Secret Service
-- [ ] Windows Credential Manager
+- [x] Linux Secret Service (via `keyring`)
+- [x] Windows Credential Manager (via `keyring`)
 - [ ] Decide whether items should be created with a restrictive ACL now that the jail exists — the jail closes the same hole far more cheaply, so this may never be worth it
 
 ## Phase 6 — GUI

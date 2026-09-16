@@ -28,6 +28,7 @@ pub mod redact;
 pub mod runner;
 pub mod scan;
 pub mod server;
+pub mod sigv4;
 pub mod store;
 pub mod transport;
 
