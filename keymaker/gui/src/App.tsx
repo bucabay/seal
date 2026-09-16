@@ -108,6 +108,11 @@ export default function App() {
     // and clearing the field after a successful save reads as losing the edit.
     setRevealed((r) => ({ ...r, [reference]: value }));
     setDrafts((d) => {
+      // Only retire the draft if it is still the text that was just written.
+      // Typing carries on while a write is in the air, and discarding the
+      // newer text would snap the field back to the older value — which then
+      // becomes what the next save stores.
+      if (d[reference] !== value) return d;
       const { [reference]: _, ...rest } = d;
       return rest;
     });

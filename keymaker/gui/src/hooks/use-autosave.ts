@@ -19,6 +19,8 @@ interface Autosave<T> {
   flushAll: () => void;
   /** Drop what is queued for `id` without writing it. */
   cancel: (id: string) => void;
+  /** Whether `id` has a write in the air or waiting behind one. */
+  isBusy: (id: string) => boolean;
 }
 
 /**
@@ -38,6 +40,15 @@ export function useAutosave<T>(
   const queued = useRef(new Map<string, T>());
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const settles = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  /**
+   * Rows with a write in the air.
+   *
+   * Without this, two writes for the same row can overlap — and since each one
+   * is a separate process talking to the OS keychain, they can finish out of
+   * order and leave the *older* value stored. One write at a time per row, with
+   * the next starting only once the last has landed.
+   */
+  const inflight = useRef(new Set<string>());
 
   // Read through a ref so a caller need not memoise `commit`, and so a write
   // already in flight is never stranded by a re-render.
@@ -69,27 +80,54 @@ export function useAutosave<T>(
     (id: string) => {
       clearTimer(timers, id);
       if (!queued.current.has(id)) return;
+      // A write is already going; whatever is queued will be picked up by that
+      // write's completion, so it cannot be lost and cannot overtake.
+      if (inflight.current.has(id)) return;
+
       const payload = queued.current.get(id) as T;
       queued.current.delete(id);
-
+      inflight.current.add(id);
       mark(id, "saving");
+
+      const settle = () => {
+        clearTimer(settles, id);
+        settles.current.set(
+          id,
+          setTimeout(() => {
+            settles.current.delete(id);
+            // A row edited again while settling has its own state; only retire
+            // the marker if it is still the one we set.
+            setState((s) => (s[id] === "saved" ? omit(s, id) : s));
+          }, SETTLE_DELAY),
+        );
+      };
+
       commitRef.current(id, payload).then(
         () => {
+          inflight.current.delete(id);
+          if (queued.current.has(id)) {
+            // Typing continued while this was in the air. The newer value is
+            // the one that should end up stored, so write it now rather than
+            // reporting "saved" for a value already superseded.
+            mark(id, "pending");
+            run(id);
+            return;
+          }
           mark(id, "saved");
-          clearTimer(settles, id);
-          settles.current.set(
-            id,
-            setTimeout(() => {
-              settles.current.delete(id);
-              // A row edited again while settling has its own state; only
-              // retire the marker if it is still the one we set.
-              setState((s) => (s[id] === "saved" ? omit(s, id) : s));
-            }, SETTLE_DELAY),
-          );
+          settle();
         },
-        // The error text belongs to the caller's toast; the row only reports
-        // that this value is not what is stored.
-        () => mark(id, "error"),
+        () => {
+          inflight.current.delete(id);
+          // A failed write must not strand a newer edit behind it.
+          if (queued.current.has(id)) {
+            mark(id, "pending");
+            run(id);
+            return;
+          }
+          // The error text belongs to the caller; the row only reports that
+          // this value is not what is stored.
+          mark(id, "error");
+        },
       );
     },
     [mark],
@@ -132,7 +170,13 @@ export function useAutosave<T>(
     };
   }, []);
 
-  return { state, schedule, flush, flushAll, cancel };
+  /** True while a row has a write in the air or queued behind one. */
+  const isBusy = useCallback(
+    (id: string) => inflight.current.has(id) || queued.current.has(id),
+    [],
+  );
+
+  return { state, schedule, flush, flushAll, cancel, isBusy };
 }
 
 function omit<T>(record: Record<string, T>, key: string): Record<string, T> {
