@@ -446,7 +446,10 @@ inject = { kind = "header", name = "Authorization", format = "Bearer {secret}" }
         let gui = Gui::new(&mut store, m, c, Log::new(&clock));
 
         let rows = gui.refs();
-        let stripe = rows.iter().find(|r| r.reference == "stripe/sk_live").unwrap();
+        let stripe = rows
+            .iter()
+            .find(|r| r.reference == "stripe/sk_live")
+            .unwrap();
         assert_eq!(stripe.issuer, "stripe");
         assert_eq!(stripe.name, "sk_live");
     }

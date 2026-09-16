@@ -476,7 +476,10 @@ mod tests {
         g.grant("stripe/sk_live", &project);
         assert!(g.revoke("stripe/sk_live", &project));
         assert!(!g.allows("stripe/sk_live", Some(&project)));
-        assert!(!g.revoke("stripe/sk_live", &project), "nothing left to take");
+        assert!(
+            !g.revoke("stripe/sk_live", &project),
+            "nothing left to take"
+        );
     }
 
     #[test]
@@ -542,7 +545,11 @@ mod tests {
 
         let text = std::fs::read_to_string(d.file()).unwrap();
         for forbidden in ["sk_live_", "secret", "password"] {
-            assert!(!text.contains(forbidden), "grants must carry no value: {}", text);
+            assert!(
+                !text.contains(forbidden),
+                "grants must carry no value: {}",
+                text
+            );
         }
     }
 

@@ -133,9 +133,18 @@ mod tests {
 
     #[test]
     fn a_reference_on_its_own_yields_no_value() {
-        assert_eq!(split_pasted("stripe/api-key"), ("stripe/api-key".into(), None));
-        assert_eq!(split_pasted("stripe/api-key   "), ("stripe/api-key".into(), None));
-        assert_eq!(split_pasted("  stripe/api-key"), ("stripe/api-key".into(), None));
+        assert_eq!(
+            split_pasted("stripe/api-key"),
+            ("stripe/api-key".into(), None)
+        );
+        assert_eq!(
+            split_pasted("stripe/api-key   "),
+            ("stripe/api-key".into(), None)
+        );
+        assert_eq!(
+            split_pasted("  stripe/api-key"),
+            ("stripe/api-key".into(), None)
+        );
     }
 
     #[test]
