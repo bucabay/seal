@@ -1,3 +1,5 @@
 target/
 .keymaker
 *.sbpl
+gui/dist/
+gui/node_modules/

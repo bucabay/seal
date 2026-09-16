@@ -1,5 +1,9 @@
 [workspace]
 members = ["crates/keymaker-core", "crates/keymaker-cli"]
+# The GUI is excluded from the default build: it pulls in WebKit and needs the
+# frontend built first. Build it with `cargo build -p keymaker-gui` from
+# crates/keymaker-gui, or `pnpm tauri build`.
+exclude = ["crates/keymaker-gui"]
 resolver = "2"
 
 [workspace.package]

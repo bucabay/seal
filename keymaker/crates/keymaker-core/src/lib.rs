@@ -14,6 +14,7 @@ pub mod broker;
 pub mod clock;
 pub mod creds;
 pub mod error;
+pub mod gui;
 pub mod handle;
 pub mod id;
 pub mod jail;

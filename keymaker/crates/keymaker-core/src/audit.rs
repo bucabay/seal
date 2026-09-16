@@ -52,6 +52,17 @@ pub enum Event {
     LeakDetected {
         where_: String,
     },
+    /// A human read a value in the GUI. The one read path there is, and it is
+    /// on the record like everything else.
+    Revealed {
+        reference: String,
+    },
+    SecretStored {
+        reference: String,
+    },
+    SecretDeleted {
+        reference: String,
+    },
     Approval {
         capability: String,
         granted: bool,

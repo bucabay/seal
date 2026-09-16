@@ -3,7 +3,7 @@
 What is built, what is next, in the order it should happen. Tick a box only
 when it is covered by a passing test.
 
-Run the suite with `cargo test --workspace`. Currently **279 passing**.
+Run the suite with `cargo test --workspace`. Currently **292 passing** (290 in the workspace, 2 in the GUI crate).
 
 ## Phase 1 — Jail the agent
 
@@ -154,12 +154,39 @@ raw `security find-generic-password` walks around everything otherwise.
 
 The library is the contract: the CLI already goes through it and holds no logic
 of its own, so the GUI is a second caller rather than a second implementation.
+The logic lives in `keymaker_core::gui` and is tested there; the Tauri crate is
+ten command wrappers and nothing else.
 
-- [ ] Tauri shell, lifting seal's design language
-- [ ] Reveal and copy — the **only** place a value can be read
-- [ ] Task list and run, with output shown redacted
-- [ ] Approval prompts for step-up policies
-- [ ] Audit viewer
+- [x] Tauri shell, lifting seal's design language (Space Grotesk / DM Sans /
+      DM Mono, sharp corners, hairline borders, orange-light / blue-dark)
+- [x] Reveal and copy — the **only** place a value can be read, one row at a
+      time, and every reveal written to the audit chain
+- [x] Task list and run, with output redacted exactly as an agent would get it:
+      a person watching a task run has no more need to see the credential
+- [x] Endpoint list, marking which ones policy stops for a human
+- [x] Audit viewer, showing whether the chain verifies
+- [x] Header badge saying whether the jail is actually enforced here
+- [x] A regression test that the main Tauri config carries no `devUrl` — see
+      below
+- [ ] Approval prompts that a waiting broker can block on. The GUI shows which
+      endpoints are gated, but an agent's step-up still has to be answered at
+      the terminal
+
+### The `devUrl` footgun, found by running it
+
+Tauri uses `devUrl` for **any** debug build, not only `tauri dev`. With one in
+the main config, `cargo build && ./keymaker-gui` opens a window pointed at a
+fixed localhost port and renders whatever is listening there.
+
+That window can call `reveal`, the one command that returns a secret value — so
+whoever holds that port controls the UI that reads secrets. It is not
+hypothetical: another project on this machine had vite on 5173, 5174 *and* 5175,
+and the Keymaker window rendered that project's app.
+
+The main config now has no `devUrl`, so every build loads the bundled frontend.
+Dev-server settings are opt-in through `tauri.dev.conf.json`, pinned to
+`127.0.0.1` rather than `localhost`, with `strictPort` so a collision fails
+loudly. Two tests enforce all of that.
 
 ## Deliberately not planned
 

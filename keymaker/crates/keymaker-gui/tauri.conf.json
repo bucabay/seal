@@ -1,0 +1,27 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Keymaker",
+  "version": "0.1.0",
+  "identifier": "dev.bucabay.keymaker",
+  "build": {
+    "frontendDist": "../../gui/dist",
+    "beforeBuildCommand": "pnpm --dir ../../gui build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Keymaker",
+        "width": 1040,
+        "height": 720,
+        "minWidth": 720,
+        "minHeight": 520
+      }
+    ],
+    "security": { "csp": null }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": ["icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"]
+  }
+}

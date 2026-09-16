@@ -1,0 +1,26 @@
+# Standalone rather than a workspace member: the GUI pulls in WebKit and needs
+# the frontend built first, so `cargo test` at the root should not have to build
+# it. Build this one with `cargo build` from here, or `pnpm tauri build`.
+[workspace]
+
+[package]
+name = "keymaker-gui"
+description = "The human surface for keymaker: the only place a value can be read."
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/bucabay/keymaker"
+rust-version = "1.75"
+
+[[bin]]
+name = "keymaker-gui"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+keymaker-core = { path = "../keymaker-core", version = "0.1.0" }
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
