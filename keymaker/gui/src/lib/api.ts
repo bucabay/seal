@@ -18,6 +18,13 @@ export type Health = {
   audit_entries: number;
   missing_refs: string[];
 };
+export type ApprovalRow = {
+  id: string;
+  capability: string;
+  rule: string;
+  detail: string;
+  seconds_left: number;
+};
 export type RunResult = {
   exit_code: number | null;
   stdout: string;
@@ -44,4 +51,7 @@ export const api = {
   health: () => invoke<Health>("health"),
   runTask: (task: string, env: string) =>
     invoke<RunResult>("run_task", { task, env }),
+  approvals: () => invoke<ApprovalRow[]>("pending_approvals"),
+  decide: (id: string, granted: boolean) =>
+    invoke<void>("decide_approval", { id, granted }),
 };

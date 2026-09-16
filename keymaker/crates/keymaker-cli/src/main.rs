@@ -29,6 +29,7 @@ USAGE
   keymaker run <task> [-e <env>]   run a task named in .keymaker
   keymaker run -- <command>        run an ad-hoc command (asks once, then remembers)
   keymaker call <endpoint> [json]  send a request built from an endpoint definition
+  keymaker approve [<id>] [--deny]  answer a request that is waiting for a person
   keymaker list                    tasks, endpoints and references — names only
   keymaker doctor [-e <env>]       which references are missing on this machine
   keymaker set <ref>               store a value, read from stdin, never echoed
@@ -556,6 +557,12 @@ fn cmd_serve(args: &Args) {
         // bury the break, and the log exists precisely to be trusted.
         .unwrap_or_else(|e| die(format!("{} ({})", e, audit_path.display())));
 
+    let approvals = keymaker_core::approvals::Approvals::new(
+        config_dir().join("approvals.json"),
+        &clock,
+        &entropy,
+    );
+
     let mut broker = Broker::new(
         &clock,
         &entropy,
@@ -568,14 +575,69 @@ fn cmd_serve(args: &Args) {
         // not long enough to bank.
         60,
     )
-    .with_audit(audit);
+    .with_audit(audit)
+    .with_approvals(approvals);
 
     let bound = bind(&path).unwrap_or_else(|e| die(e));
     eprintln!("keymaker: broker listening on {}", path.display());
     eprintln!("keymaker: audit trail at {}", audit_path.display());
+    eprintln!("keymaker: approvals answered in the GUI, or with `keymaker approve`");
     eprintln!("keymaker: {:?}", broker);
     if let Err(e) = serve(&mut broker, &bound) {
         die(e);
+    }
+}
+
+fn cmd_approve(args: &Args) {
+    use keymaker_core::approvals::Approvals;
+    use keymaker_core::clock::Clock;
+    use keymaker_core::id::OsEntropy;
+
+    let clock = SystemClock;
+    let entropy = OsEntropy;
+    let queue = Approvals::new(config_dir().join("approvals.json"), &clock, &entropy);
+
+    let deny = args.rest.iter().any(|a| a == "--deny");
+    let target = args.rest.iter().find(|a| !a.starts_with('-'));
+
+    let waiting = queue.pending();
+    let Some(target) = target else {
+        if waiting.is_empty() {
+            println!("nothing is waiting for a decision");
+            return;
+        }
+        println!("waiting for a decision:\n");
+        for r in &waiting {
+            println!("  {}  {}", &r.id[..8], r.capability);
+            println!("      rule: {}", r.rule);
+            if !r.detail.is_empty() {
+                println!("      {}", r.detail);
+            }
+            println!(
+                "      expires in {}s",
+                r.expires_at.saturating_sub(clock.now())
+            );
+        }
+        println!("\nanswer with: keymaker approve <id-or-capability> [--deny]");
+        return;
+    };
+
+    // Accept an id prefix or a capability name, since both are on screen.
+    let Some(found) = waiting
+        .iter()
+        .find(|r| r.id.starts_with(target.as_str()) || &r.capability == target)
+    else {
+        die(format!("nothing waiting matches `{}`", target));
+    };
+
+    if queue.decide(&found.id, !deny) {
+        println!(
+            "{} {}",
+            if deny { "denied" } else { "approved" },
+            found.capability
+        );
+    } else {
+        die("that request is no longer waiting");
     }
 }
 
@@ -643,6 +705,7 @@ fn main() {
     match command.as_str() {
         "serve" => cmd_serve(&args),
         "mcp" => cmd_mcp(&args),
+        "approve" => cmd_approve(&args),
         "jail" => cmd_jail(&args),
         "run" => cmd_run(&args),
         "call" => cmd_call(&args),

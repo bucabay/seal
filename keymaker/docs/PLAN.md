@@ -3,7 +3,7 @@
 What is built, what is next, in the order it should happen. Tick a box only
 when it is covered by a passing test.
 
-Run the suite with `cargo test --workspace`. Currently **292 passing** (290 in the workspace, 2 in the GUI crate).
+Run the suite with `cargo test --workspace`. Currently **309 passing** (307 in the workspace, 2 in the GUI crate).
 
 ## Phase 1 — Jail the agent
 
@@ -26,10 +26,11 @@ raw `security find-generic-password` walks around everything otherwise.
 - [x] Windows: no jail. There is no equivalent of Landlock or seatbelt that is
       worth the complexity here, so `enforcement()` returns `None` and the
       command refuses rather than pretending
-- [ ] Metadata endpoint blocking, on either platform. Not expressible in sbpl,
-      and Landlock has no network rules; a namespace with a packet filter would
-      also cut off the network the agent legitimately needs. Stated as a gap
-      rather than closed
+- [x] **Decided: not closed, and said so.** Metadata endpoint blocking is not
+      expressible in sbpl, and Landlock has no network rules. A namespace with a
+      packet filter would also cut off the network the agent legitimately needs.
+      `Profile::blocks_hosts()` returns false on macOS so no caller can assume
+      otherwise, and the gap is documented rather than papered over
 - [ ] Measure how tight `strict` can be before real agent work breaks (a week of real use)
 
 ## Phase 2 — Broker
@@ -139,8 +140,13 @@ raw `security find-generic-password` walks around everything otherwise.
 - [x] Refuse to start against a log whose chain is already broken, rather than
       appending and burying the break
 - [x] `keymaker audit` and `keymaker audit --verify` against the real file
-- [ ] `keymaker audit --verify` against the real file
-- [ ] Approval UI beyond a terminal prompt
+- [x] `keymaker audit --verify` against the real file
+- [x] Approval beyond a terminal prompt: the broker and the GUI share a queue
+      on disk, so a person can answer wherever they are. One approval
+      authorises one call, a request lapses if nobody answers, a retry reuses
+      the waiting request rather than stacking, and an explicit refusal is
+      carried through rather than looking like silence
+- [x] `keymaker approve` for people without the GUI open
 
 ## Phase 5 — Storage backends
 
@@ -148,7 +154,13 @@ raw `security find-generic-password` walks around everything otherwise.
 - [x] macOS Keychain
 - [x] Linux Secret Service (via `keyring`)
 - [x] Windows Credential Manager (via `keyring`)
-- [ ] Decide whether items should be created with a restrictive ACL now that the jail exists — the jail closes the same hole far more cheaply, so this may never be worth it
+- [x] **Decided: no restrictive ACL.** The jail closes the same hole from the
+      other side, in days rather than weeks, with no Apple Developer ID and
+      identically on Linux. A per-item ACL would buy per-secret granularity,
+      which nothing in the design asks for: authority is expressed per
+      *capability* in an endpoint definition, not per stored value. Revisit only
+      if keymaker ever has to defend against a process that is outside the jail
+      but still the same user
 
 ## Phase 6 — GUI
 
@@ -168,9 +180,9 @@ ten command wrappers and nothing else.
 - [x] Header badge saying whether the jail is actually enforced here
 - [x] A regression test that the main Tauri config carries no `devUrl` — see
       below
-- [ ] Approval prompts that a waiting broker can block on. The GUI shows which
-      endpoints are gated, but an agent's step-up still has to be answered at
-      the terminal
+- [x] An Approvals tab, polled every two seconds with a count in the tab bar —
+      an agent blocked on a decision is waiting on a person, so they should not
+      have to hit refresh
 
 ### The `devUrl` footgun, found by running it
 

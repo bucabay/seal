@@ -9,6 +9,7 @@
 //!
 //! Everything here is a library first. The CLI and the GUI are both callers.
 
+pub mod approvals;
 pub mod audit;
 pub mod broker;
 pub mod clock;

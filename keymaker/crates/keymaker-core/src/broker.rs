@@ -4,6 +4,7 @@
 //! says, and from then on can ask for *actions*. Every path through here ends
 //! in an effect or an error — never a value.
 
+use crate::approvals::Approvals;
 use crate::audit::{Event, Log};
 use crate::clock::Clock;
 use crate::error::{Error, Result};
@@ -37,8 +38,8 @@ pub trait Transport: std::fmt::Debug {
 pub struct Connection {
     pub peer: PeerIdentity,
     pub session: Option<SessionId>,
-    /// Capabilities a human has approved during this connection.
-    approved: BTreeSet<String>,
+    /// Capabilities a human approved on this connection.
+    pub(crate) approved: BTreeSet<String>,
 }
 
 impl Connection {
@@ -60,6 +61,9 @@ pub struct Broker<'a> {
     registry: Registry<'a>,
     audit: Log<'a>,
     default_uses: u32,
+    /// Shared with the GUI, so a person can answer a step-up somewhere other
+    /// than the terminal the agent happens to be attached to.
+    approvals: Option<Approvals<'a>>,
 }
 
 impl std::fmt::Debug for Broker<'_> {
@@ -93,6 +97,7 @@ impl<'a> Broker<'a> {
             registry: Registry::new(clock, entropy, handle_ttl),
             audit: Log::new(clock),
             default_uses: 1,
+            approvals: None,
         }
     }
 
@@ -101,6 +106,13 @@ impl<'a> Broker<'a> {
     /// wanted.
     pub fn with_audit(mut self, log: Log<'a>) -> Self {
         self.audit = log;
+        self
+    }
+
+    /// Let a person answer step-up requests in the GUI rather than only at the
+    /// terminal the agent is attached to.
+    pub fn with_approvals(mut self, approvals: Approvals<'a>) -> Self {
+        self.approvals = Some(approvals);
         self
     }
 
@@ -393,19 +405,56 @@ impl<'a> Broker<'a> {
                 return Response::from(&Error::Denied(rule));
             }
             Decision::StepUp(rule) => {
-                if !conn.approved.contains(&name) {
-                    self.audit.append(Event::PolicyDecision {
-                        capability: name.clone(),
-                        decision: "step_up".into(),
-                        rule: rule.clone(),
-                    });
-                    return Response::ApprovalRequired {
-                        capability: name,
-                        rule,
-                    };
+                // An approval given on this connection, or one a person left in
+                // the shared queue. Either is spent by the call it permits:
+                // there is no standing permission.
+                let approved_here = conn.approved.remove(&name);
+                let approved_elsewhere = match &self.approvals {
+                    Some(q) => q.take(&name),
+                    None => None,
+                };
+
+                match (approved_here, approved_elsewhere) {
+                    // An explicit refusal is carried through rather than being
+                    // reported as "still waiting".
+                    (_, Some(false)) => {
+                        self.audit.append(Event::Approval {
+                            capability: name.clone(),
+                            granted: false,
+                        });
+                        return Response::from(&Error::Denied(format!(
+                            "a person refused this: {}",
+                            rule
+                        )));
+                    }
+                    (true, _) | (_, Some(true)) => {
+                        self.audit.append(Event::Approval {
+                            capability: name.clone(),
+                            granted: true,
+                        });
+                    }
+                    (false, None) => {
+                        self.audit.append(Event::PolicyDecision {
+                            capability: name.clone(),
+                            decision: "step_up".into(),
+                            rule: rule.clone(),
+                        });
+                        // Put it somewhere a person will see it.
+                        if let Some(q) = &self.approvals {
+                            let detail = checked
+                                .facts()
+                                .iter()
+                                .map(|(k, v)| format!("{}={}", k, v))
+                                .collect::<Vec<_>>()
+                                .join(" ");
+                            q.request(&name, &rule, &detail);
+                        }
+                        return Response::ApprovalRequired {
+                            capability: name,
+                            rule,
+                        };
+                    }
                 }
-                // An approval is spent by the call it permitted.
-                conn.approved.remove(&name);
             }
         }
 
@@ -947,6 +996,170 @@ policy = { deny = "amount > 0" }
             "one approval must authorise exactly one call"
         );
         assert_eq!(f.transport.sent.borrow().len(), 1);
+    }
+
+    /// A scratch directory for the shared approval queue.
+    struct ApprovalDir(std::path::PathBuf);
+    impl ApprovalDir {
+        fn new(tag: &str) -> ApprovalDir {
+            static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+            let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let p = std::env::temp_dir().join(format!(
+                "km-broker-approve-{}-{}-{}",
+                std::process::id(),
+                n,
+                tag
+            ));
+            let _ = std::fs::remove_dir_all(&p);
+            std::fs::create_dir_all(&p).unwrap();
+            ApprovalDir(p)
+        }
+        fn file(&self) -> std::path::PathBuf {
+            self.0.join("approvals.json")
+        }
+    }
+    impl Drop for ApprovalDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn big_refund() -> RequestDraft {
+        RequestDraft {
+            endpoint: "stripe.refund".into(),
+            body: [("amount".to_string(), serde_json::json!(50_000))]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_gated_call_is_queued_for_a_person_and_proceeds_once_answered() {
+        let dir = ApprovalDir::new("granted");
+        let f = Fixture::new();
+        let queue = crate::approvals::Approvals::new(dir.file(), &f.clock, &f.entropy);
+        let mut b = f.broker().with_approvals(queue);
+        let mut c = connected(&mut b);
+
+        // First attempt: blocked, and now waiting where a person can see it.
+        let h1 = grant(&mut b, &mut c, "stripe.refund", GrantKind::Request);
+        let r = b.dispatch(
+            &mut c,
+            Request::Call {
+                handle: h1,
+                draft: big_refund(),
+            },
+        );
+        assert!(matches!(r, Response::ApprovalRequired { .. }));
+        assert!(f.transport.sent.borrow().is_empty());
+
+        // The GUI, a separate process, sees it and says yes.
+        let gui = crate::approvals::Approvals::new(dir.file(), &f.clock, &f.entropy);
+        let waiting = gui.pending();
+        assert_eq!(waiting.len(), 1);
+        assert_eq!(waiting[0].capability, "stripe.refund");
+        assert!(
+            waiting[0].detail.contains("amount"),
+            "a person should see what they are approving: {}",
+            waiting[0].detail
+        );
+        assert!(gui.decide(&waiting[0].id, true));
+
+        // The agent retries and gets through.
+        let h2 = grant(&mut b, &mut c, "stripe.refund", GrantKind::Request);
+        let r = b.dispatch(
+            &mut c,
+            Request::Call {
+                handle: h2,
+                draft: big_refund(),
+            },
+        );
+        assert!(
+            matches!(r, Response::Called { .. }),
+            "expected the call to proceed: {:?}",
+            r
+        );
+        assert_eq!(f.transport.sent.borrow().len(), 1);
+
+        // And the approval is spent.
+        let h3 = grant(&mut b, &mut c, "stripe.refund", GrantKind::Request);
+        let r = b.dispatch(
+            &mut c,
+            Request::Call {
+                handle: h3,
+                draft: big_refund(),
+            },
+        );
+        assert!(
+            matches!(r, Response::ApprovalRequired { .. }),
+            "one approval must authorise exactly one call"
+        );
+        assert_eq!(f.transport.sent.borrow().len(), 1);
+    }
+
+    #[test]
+    fn a_person_refusing_is_reported_as_a_refusal_not_as_still_waiting() {
+        let dir = ApprovalDir::new("denied");
+        let f = Fixture::new();
+        let queue = crate::approvals::Approvals::new(dir.file(), &f.clock, &f.entropy);
+        let mut b = f.broker().with_approvals(queue);
+        let mut c = connected(&mut b);
+
+        let h1 = grant(&mut b, &mut c, "stripe.refund", GrantKind::Request);
+        b.dispatch(
+            &mut c,
+            Request::Call {
+                handle: h1,
+                draft: big_refund(),
+            },
+        );
+
+        let gui = crate::approvals::Approvals::new(dir.file(), &f.clock, &f.entropy);
+        let waiting = gui.pending();
+        assert!(gui.decide(&waiting[0].id, false));
+
+        let h2 = grant(&mut b, &mut c, "stripe.refund", GrantKind::Request);
+        let r = b.dispatch(
+            &mut c,
+            Request::Call {
+                handle: h2,
+                draft: big_refund(),
+            },
+        );
+        match &r {
+            Response::Error { kind, message } => {
+                assert_eq!(kind, "denied");
+                assert!(message.contains("a person refused"));
+            }
+            other => panic!("expected a refusal, got {:?}", other),
+        }
+        assert!(f.transport.sent.borrow().is_empty(), "nothing may be sent");
+    }
+
+    #[test]
+    fn an_unanswered_request_leaves_the_call_blocked() {
+        let dir = ApprovalDir::new("waiting");
+        let f = Fixture::new();
+        let queue = crate::approvals::Approvals::new(dir.file(), &f.clock, &f.entropy);
+        let mut b = f.broker().with_approvals(queue);
+        let mut c = connected(&mut b);
+
+        for _ in 0..3 {
+            let h = grant(&mut b, &mut c, "stripe.refund", GrantKind::Request);
+            let r = b.dispatch(
+                &mut c,
+                Request::Call {
+                    handle: h,
+                    draft: big_refund(),
+                },
+            );
+            assert!(matches!(r, Response::ApprovalRequired { .. }));
+        }
+        // Retrying does not pile up requests for the person to wade through.
+        let gui = crate::approvals::Approvals::new(dir.file(), &f.clock, &f.entropy);
+        assert_eq!(gui.pending().len(), 1);
+        assert!(f.transport.sent.borrow().is_empty());
     }
 
     #[test]

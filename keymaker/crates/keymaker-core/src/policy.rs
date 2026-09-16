@@ -26,6 +26,25 @@ impl Value {
     }
 }
 
+impl std::fmt::Display for Value {
+    /// How a value appears to a person — in an approval prompt, for instance.
+    /// `Debug` renders `Num(500000.0)`, which is noise to everyone but a
+    /// compiler.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::Num(n) => {
+                if n.fract() == 0.0 && n.abs() < 1e15 {
+                    write!(f, "{}", *n as i64)
+                } else {
+                    write!(f, "{}", n)
+                }
+            }
+            Value::Str(s) => f.write_str(s),
+            Value::Bool(b) => write!(f, "{}", b),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Op {
     Gt,
@@ -288,6 +307,14 @@ mod tests {
             ..Default::default()
         };
         assert!(matches!(p2.evaluate(&facts(&[])), Decision::Deny(_)));
+    }
+
+    #[test]
+    fn values_render_for_people_not_for_compilers() {
+        assert_eq!(Value::Num(500_000.0).to_string(), "500000");
+        assert_eq!(Value::Num(1.5).to_string(), "1.5");
+        assert_eq!(Value::Str("ch_1".into()).to_string(), "ch_1");
+        assert_eq!(Value::Bool(true).to_string(), "true");
     }
 
     #[test]

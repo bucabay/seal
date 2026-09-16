@@ -4,6 +4,9 @@ import {
   Play,
   Globe,
   ScrollText,
+  ShieldQuestion,
+  Check,
+  X,
   ShieldCheck,
   ShieldAlert,
   Sun,
@@ -13,6 +16,7 @@ import {
 } from "lucide-react";
 import {
   api,
+  type ApprovalRow,
   type AuditRow,
   type EndpointRow,
   type Health,
@@ -23,10 +27,11 @@ import {
 import { cn, describeEvent, when } from "@/lib/utils";
 import { SecretRow } from "@/components/secret-row";
 
-type Tab = "secrets" | "tasks" | "endpoints" | "audit";
+type Tab = "secrets" | "approvals" | "tasks" | "endpoints" | "audit";
 
 const TABS: { id: Tab; label: string; icon: typeof KeyRound }[] = [
   { id: "secrets", label: "Secrets", icon: KeyRound },
+  { id: "approvals", label: "Approvals", icon: ShieldQuestion },
   { id: "tasks", label: "Tasks", icon: Play },
   { id: "endpoints", label: "Endpoints", icon: Globe },
   { id: "audit", label: "Audit", icon: ScrollText },
@@ -75,6 +80,7 @@ export default function App() {
   const [tasks, setTasks] = useState<TaskRow[]>([]);
   const [endpoints, setEndpoints] = useState<EndpointRow[]>([]);
   const [audit, setAudit] = useState<AuditRow[]>([]);
+  const [approvals, setApprovals] = useState<ApprovalRow[]>([]);
   const [envs, setEnvs] = useState<string[]>([]);
   const [env, setEnv] = useState("default");
   const [health, setHealth] = useState<Health | null>(null);
@@ -85,13 +91,14 @@ export default function App() {
   const refresh = useCallback(async () => {
     setError(null);
     try {
-      const [r, t, e, a, v, h] = await Promise.all([
+      const [r, t, e, a, v, h, p] = await Promise.all([
         api.refs(),
         api.tasks(),
         api.endpoints(),
         api.audit(),
         api.environments(),
         api.health(),
+        api.approvals(),
       ]);
       setRefs(r);
       setTasks(t);
@@ -99,6 +106,7 @@ export default function App() {
       setAudit(a);
       setEnvs(v);
       setHealth(h);
+      setApprovals(p);
       if (v.length > 0 && !v.includes(env)) setEnv(v[0]);
     } catch (err) {
       setError(String(err));
@@ -112,6 +120,24 @@ export default function App() {
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
   }, [dark]);
+
+  // An agent blocked on a decision is waiting on a person, so poll rather than
+  // make them hit refresh. Cheap: it reads one small file.
+  useEffect(() => {
+    const t = setInterval(() => {
+      api.approvals().then(setApprovals).catch(() => {});
+    }, 2000);
+    return () => clearInterval(t);
+  }, []);
+
+  async function decide(id: string, granted: boolean) {
+    try {
+      await api.decide(id, granted);
+      await refresh();
+    } catch (err) {
+      setError(String(err));
+    }
+  }
 
   async function run(task: string) {
     setRunning(task);
@@ -184,6 +210,11 @@ export default function App() {
           >
             <Icon size={13} />
             {label}
+            {id === "approvals" && approvals.length > 0 && (
+              <span className="ml-0.5 bg-primary px-1 text-[10px] font-600 text-primary-foreground">
+                {approvals.length}
+              </span>
+            )}
           </button>
         ))}
       </nav>
@@ -216,6 +247,63 @@ export default function App() {
               This window is the only place a value can be read. The CLI and the MCP
               surface have no such command — that is the point of them. Every reveal is
               written to the audit log.
+            </p>
+          </>
+        )}
+
+        {tab === "approvals" && (
+          <>
+            <Panel
+              title="Waiting for a decision"
+              note={approvals.length === 0 ? "nothing waiting" : `${approvals.length} pending`}
+            >
+              {approvals.length === 0 ? (
+                <Empty>
+                  When a policy stops an agent, the request appears here for you to
+                  answer. Nothing is waiting.
+                </Empty>
+              ) : (
+                approvals.map((a) => (
+                  <div key={a.id} className="border-b border-line px-4 py-3 last:border-b-0">
+                    <div className="flex items-start gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="font-mono text-sm">{a.capability}</div>
+                        <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">
+                          stopped by: {a.rule}
+                        </div>
+                        {a.detail && (
+                          <div className="mt-1 border border-line bg-background px-2 py-1 font-mono text-[11px]">
+                            {a.detail}
+                          </div>
+                        )}
+                        <div className="mt-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                          lapses in {a.seconds_left}s
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 gap-2">
+                        <button
+                          onClick={() => void decide(a.id, true)}
+                          className="flex items-center gap-1 border border-primary px-2.5 py-1 font-mono text-[11px] uppercase tracking-wider text-primary hover:bg-primary hover:text-primary-foreground"
+                        >
+                          <Check size={12} />
+                          approve
+                        </button>
+                        <button
+                          onClick={() => void decide(a.id, false)}
+                          className="flex items-center gap-1 border border-line px-2.5 py-1 font-mono text-[11px] uppercase tracking-wider text-muted-foreground hover:border-destructive hover:text-destructive"
+                        >
+                          <X size={12} />
+                          deny
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </Panel>
+            <p className="font-mono text-[11px] leading-relaxed text-muted-foreground">
+              One approval authorises one call, and lapses if nobody answers. An agent
+              cannot approve its own request — the MCP tool for it grants nothing.
             </p>
           </>
         )}

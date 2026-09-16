@@ -190,6 +190,50 @@ impl<'a> Gui<'a> {
             .collect()
     }
 
+    /// What is waiting for a decision. The GUI polls this: a person is the
+    /// slow part of the loop, so there is nothing to push.
+    pub fn approvals(&self, queue: &crate::approvals::Approvals, now: u64) -> Vec<ApprovalRow> {
+        queue
+            .pending()
+            .into_iter()
+            .map(|r| ApprovalRow {
+                seconds_left: r.expires_at.saturating_sub(now),
+                id: r.id,
+                capability: r.capability,
+                rule: r.rule,
+                detail: r.detail,
+            })
+            .collect()
+    }
+
+    /// Answer one. Recorded, because who decided matters as much as what was
+    /// decided.
+    pub fn decide(
+        &mut self,
+        queue: &crate::approvals::Approvals,
+        id: &str,
+        granted: bool,
+    ) -> Result<()> {
+        let capability = queue
+            .pending()
+            .into_iter()
+            .find(|r| r.id == id)
+            .map(|r| r.capability)
+            .ok_or_else(|| Error::NotFound(format!("request `{}`", id)))?;
+
+        if !queue.decide(id, granted) {
+            return Err(Error::NotFound(format!(
+                "request `{}` is no longer waiting",
+                id
+            )));
+        }
+        self.audit.append(Event::Approval {
+            capability,
+            granted,
+        });
+        Ok(())
+    }
+
     pub fn health(&self) -> Health {
         let enforcement = crate::jail::Profile::enforcement();
         let missing_refs = self
@@ -206,6 +250,16 @@ impl<'a> Gui<'a> {
             missing_refs,
         }
     }
+}
+
+/// One request waiting for a person, as the GUI shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ApprovalRow {
+    pub id: String,
+    pub capability: String,
+    pub rule: String,
+    pub detail: String,
+    pub seconds_left: u64,
 }
 
 /// Clock used by the GUI's audit log.
@@ -412,6 +466,85 @@ inject = { kind = "header", name = "Authorization", format = "Bearer {secret}" }
             }]
         );
         assert_eq!(gui.environments(), vec!["default", "production"]);
+    }
+
+    struct QueueDir(std::path::PathBuf);
+    impl QueueDir {
+        fn new(tag: &str) -> QueueDir {
+            static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+            let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let p = std::env::temp_dir().join(format!(
+                "km-gui-approve-{}-{}-{}",
+                std::process::id(),
+                n,
+                tag
+            ));
+            let _ = std::fs::remove_dir_all(&p);
+            std::fs::create_dir_all(&p).unwrap();
+            QueueDir(p)
+        }
+        fn file(&self) -> std::path::PathBuf {
+            self.0.join("approvals.json")
+        }
+    }
+    impl Drop for QueueDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn waiting_requests_are_listed_with_how_long_is_left() {
+        let d = QueueDir::new("list");
+        let (mut store, m, c) = parts();
+        let clock = FixedClock::new(1_000);
+        let entropy = crate::id::SeqEntropy::new();
+        let queue = crate::approvals::Approvals::new(d.file(), &clock, &entropy).with_ttl(300);
+        queue.request("stripe.refund", "amount > 100000", "amount=500000");
+
+        let gui = Gui::new(&mut store, m, c, Log::new(&clock));
+        clock.advance(60);
+        let rows = gui.approvals(&queue, clock.now());
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].capability, "stripe.refund");
+        assert_eq!(rows[0].detail, "amount=500000");
+        assert_eq!(rows[0].seconds_left, 240);
+    }
+
+    #[test]
+    fn deciding_answers_the_request_and_records_who_decided_what() {
+        let d = QueueDir::new("decide");
+        let (mut store, m, c) = parts();
+        let clock = FixedClock::new(1_000);
+        let entropy = crate::id::SeqEntropy::new();
+        let queue = crate::approvals::Approvals::new(d.file(), &clock, &entropy);
+        let id = queue.request("stripe.refund", "rule", "");
+
+        let mut gui = Gui::new(&mut store, m, c, Log::new(&clock));
+        gui.decide(&queue, &id, true).unwrap();
+
+        assert!(gui.approvals(&queue, clock.now()).is_empty());
+        assert_eq!(queue.take("stripe.refund"), Some(true));
+        let log = format!("{:?}", gui.audit_rows());
+        assert!(log.contains("approval"));
+        assert!(log.contains("stripe.refund"));
+    }
+
+    #[test]
+    fn deciding_something_that_is_not_waiting_is_an_error() {
+        let d = QueueDir::new("ghost");
+        let (mut store, m, c) = parts();
+        let clock = FixedClock::new(1_000);
+        let entropy = crate::id::SeqEntropy::new();
+        let queue = crate::approvals::Approvals::new(d.file(), &clock, &entropy);
+
+        let mut gui = Gui::new(&mut store, m, c, Log::new(&clock));
+        assert!(gui.decide(&queue, "nope", true).is_err());
+        assert!(
+            gui.audit_rows().is_empty(),
+            "nothing happened, nothing recorded"
+        );
     }
 
     #[test]

@@ -12,7 +12,10 @@
 
 use keymaker_core::audit::Log;
 use keymaker_core::clock::SystemClock;
-use keymaker_core::gui::{AuditRow, EndpointRow, Gui, Health, RefRow, TaskRow};
+use keymaker_core::approvals::Approvals;
+use keymaker_core::clock::Clock;
+use keymaker_core::gui::{ApprovalRow, AuditRow, EndpointRow, Gui, Health, RefRow, TaskRow};
+use keymaker_core::id::OsEntropy;
 use keymaker_core::manifest::Manifest;
 use keymaker_core::provider::Catalog;
 use keymaker_core::runner::{ProcessSpawner, Runner};
@@ -23,6 +26,15 @@ use std::path::PathBuf;
 /// `SystemClock` holds nothing, so one can live for the whole program and be
 /// borrowed by every audit log.
 static CLOCK: SystemClock = SystemClock;
+
+/// Likewise: entropy holds nothing, so one can be borrowed for the whole run.
+static ENTROPY: OsEntropy = OsEntropy;
+
+/// The queue the broker and this window share. A person is the slow part of
+/// the loop, so the GUI polls it rather than anything being pushed.
+fn approval_queue() -> Approvals<'static> {
+    Approvals::new(config_dir().join("approvals.json"), &CLOCK, &ENTROPY)
+}
 
 fn config_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
@@ -113,6 +125,20 @@ fn audit_rows() -> Result<Vec<AuditRow>, String> {
     with_gui(|g| Ok(g.audit_rows()))
 }
 
+/// What is waiting for a person right now.
+#[tauri::command]
+fn pending_approvals() -> Result<Vec<ApprovalRow>, String> {
+    let queue = approval_queue();
+    with_gui(|g| Ok(g.approvals(&queue, CLOCK.now())))
+}
+
+/// Answer one. The broker picks the answer up on the agent's next attempt.
+#[tauri::command]
+fn decide_approval(id: String, granted: bool) -> Result<(), String> {
+    let queue = approval_queue();
+    with_gui(|g| g.decide(&queue, &id, granted).map_err(|e| e.to_string()))
+}
+
 #[tauri::command]
 fn health() -> Result<Health, String> {
     with_gui(|g| Ok(g.health()))
@@ -165,6 +191,8 @@ fn main() {
             audit_rows,
             health,
             run_task,
+            pending_approvals,
+            decide_approval,
         ])
         .run(tauri::generate_context!())
         .expect("failed to start keymaker");
