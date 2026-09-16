@@ -99,8 +99,11 @@ export default function App() {
   const [copied, setCopied] = useState<string | null>(null);
   /** What is typed in the search box. Empty means the whole inventory. */
   const [query, setQuery] = useState("");
-  /** Which group's inline add form is open, if any. */
-  const [addingTo, setAddingTo] = useState<string | null>(null);
+  /**
+   * Where the inline add form sits: at the foot of a group, or directly under
+   * one row. One piece of state, because there is only ever one form.
+   */
+  const [addAt, setAddAt] = useState<{ issuer: string; after?: string } | null>(null);
   /** Groups the user has folded away. Remembered across restarts. */
   const [collapsed, setCollapsed] = useState<Set<string>>(loadCollapsed);
   const [result, setResult] = useState<(RunResult & { task: string }) | null>(null);
@@ -425,7 +428,11 @@ export default function App() {
                             saveCollapsed(next);
                             return next;
                           });
-                          setAddingTo(addingTo === group.issuer ? null : group.issuer);
+                          setAddAt((at) =>
+                            at?.issuer === group.issuer && at.after === undefined
+                              ? null
+                              : { issuer: group.issuer },
+                          );
                         }}
                         className="px-4 py-1.5 text-muted-foreground hover:text-primary"
                         title={`Add a key under ${group.issuer}`}
@@ -438,29 +445,42 @@ export default function App() {
                     {expanded && (
                     <div className="border-l border-line ml-4">
                     {group.rows.map((r) => (
-                      <SecretRow
-                        key={r.reference}
-                        row={r}
-                        revealed={r.reference in revealed ? revealed[r.reference] : null}
-                        draft={drafts[r.reference]}
-                        status={statusOf(r.reference)}
-                        copied={copied === r.reference}
-                        onReveal={() => void reveal(r.reference)}
-                        onHide={() => hide(r.reference)}
-                        onChange={(v) => edit(r.reference, v)}
-                        onFlush={() => flush(r.reference)}
-                        onCopy={() => void copy(r.reference)}
-                        onDelete={() => void remove(r.reference)}
-                      />
+                      <div key={r.reference}>
+                        <SecretRow
+                          row={r}
+                          revealed={r.reference in revealed ? revealed[r.reference] : null}
+                          draft={drafts[r.reference]}
+                          status={statusOf(r.reference)}
+                          copied={copied === r.reference}
+                          onReveal={() => void reveal(r.reference)}
+                          onHide={() => hide(r.reference)}
+                          onChange={(v) => edit(r.reference, v)}
+                          onFlush={() => flush(r.reference)}
+                          onEnter={() =>
+                            setAddAt({ issuer: r.issuer, after: r.reference })
+                          }
+                          onCopy={() => void copy(r.reference)}
+                          onDelete={() => void remove(r.reference)}
+                        />
+                        {/* Enter on any row opens the next one directly
+                            beneath it, wherever in the list it was. */}
+                        {addAt?.after === r.reference && (
+                          <AddSecret
+                            prefill={`${r.issuer}/`}
+                            onAdded={() => void refresh()}
+                            onCancel={() => setAddAt(null)}
+                          />
+                        )}
+                      </div>
                     ))}
-                    {/* At the foot of the group, where the key being added
-                        will appear — not at the top, above what already
-                        exists. */}
-                    {addingTo === group.issuer && (
+                    {/* Or at the foot of the group, when added from its
+                        header — where the key will appear, not above what
+                        already exists. */}
+                    {addAt?.issuer === group.issuer && addAt.after === undefined && (
                       <AddSecret
                         prefill={`${group.issuer}/`}
                         onAdded={() => void refresh()}
-                        onCancel={() => setAddingTo(null)}
+                        onCancel={() => setAddAt(null)}
                       />
                     )}
                     </div>

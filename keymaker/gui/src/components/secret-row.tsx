@@ -46,6 +46,7 @@ export function SecretRow({
   onHide,
   onChange,
   onFlush,
+  onEnter,
   onCopy,
   onDelete,
 }: {
@@ -60,6 +61,8 @@ export function SecretRow({
   onHide: () => void;
   onChange: (value: string) => void;
   onFlush: () => void;
+  /** Enter was pressed: save now, and open a new row beneath this one. */
+  onEnter: () => void;
   onCopy: () => void;
   onDelete: () => void;
 }) {
@@ -119,6 +122,14 @@ export function SecretRow({
           // Leaving the field is a clear sign the edit is finished; do not make
           // the user wait out the debounce.
           onBlur={onFlush}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter") return;
+            // Save this one now rather than waiting out the debounce, then
+            // carry on to the next key — the same rhythm as the add form.
+            e.preventDefault();
+            onFlush();
+            onEnter();
+          }}
           aria-label={isRevealed ? `Value of ${row.reference}` : `${row.reference}, hidden`}
         />
 
