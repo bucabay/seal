@@ -1,6 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type RefRow = { reference: string; present: boolean; used_by: string[] };
+export type RefRow = {
+  reference: string;
+  /** Derived from the reference, never stored. */
+  issuer: string;
+  name: string;
+  present: boolean;
+  used_by: string[];
+};
 export type TaskRow = { name: string; command: string };
 export type EndpointRow = {
   name: string;

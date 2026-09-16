@@ -21,6 +21,9 @@ use std::collections::BTreeSet;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RefRow {
     pub reference: String,
+    /// Derived from the reference, never stored — see [`crate::reference`].
+    pub issuer: String,
+    pub name: String,
     pub present: bool,
     /// Environments that bind this reference, for context in the list.
     pub used_by: Vec<String>,
@@ -111,10 +114,15 @@ impl<'a> Gui<'a> {
 
         names
             .into_iter()
-            .map(|reference| RefRow {
-                present: self.store.get(&reference).is_ok(),
-                used_by: used_by.get(&reference).cloned().unwrap_or_default(),
-                reference,
+            .map(|reference| {
+                let (issuer, name) = crate::reference::split(&reference);
+                RefRow {
+                    issuer: issuer.to_string(),
+                    name: name.to_string(),
+                    present: self.store.get(&reference).is_ok(),
+                    used_by: used_by.get(&reference).cloned().unwrap_or_default(),
+                    reference,
+                }
             })
             .collect()
     }
@@ -130,6 +138,9 @@ impl<'a> Gui<'a> {
     }
 
     pub fn save(&mut self, reference: &str, value: &str) -> Result<()> {
+        if let Some(problem) = crate::reference::problem(reference) {
+            return Err(Error::Constraint(problem));
+        }
         if value.is_empty() {
             return Err(Error::Constraint("refusing to store an empty value".into()));
         }
@@ -426,6 +437,29 @@ inject = { kind = "header", name = "Authorization", format = "Bearer {secret}" }
             !log.contains("sk_live_SHOULD_NOT_APPEAR"),
             "the audit log must never carry a value"
         );
+    }
+
+    #[test]
+    fn rows_carry_the_group_derived_from_the_name() {
+        let (mut store, m, c) = parts();
+        let clock = FixedClock::new(0);
+        let gui = Gui::new(&mut store, m, c, Log::new(&clock));
+
+        let rows = gui.refs();
+        let stripe = rows.iter().find(|r| r.reference == "stripe/sk_live").unwrap();
+        assert_eq!(stripe.issuer, "stripe");
+        assert_eq!(stripe.name, "sk_live");
+    }
+
+    #[test]
+    fn a_malformed_reference_is_refused_with_a_reason() {
+        let (mut store, m, c) = parts();
+        let clock = FixedClock::new(0);
+        let mut gui = Gui::new(&mut store, m, c, Log::new(&clock));
+
+        let err = gui.save("has a space", "value").unwrap_err();
+        assert!(format!("{}", err).contains("spaces"));
+        assert!(gui.save("/leading", "value").is_err());
     }
 
     #[test]

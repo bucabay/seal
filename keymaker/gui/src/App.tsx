@@ -13,6 +13,8 @@ import {
   Moon,
   RefreshCw,
   Lock,
+  Search,
+  Plus,
 } from "lucide-react";
 import {
   api,
@@ -28,6 +30,7 @@ import { cn, describeEvent, when } from "@/lib/utils";
 import { SecretRow, type RowStatus } from "@/components/secret-row";
 import { useAutosave } from "@/hooks/use-autosave";
 import { AddSecret } from "@/components/add-secret";
+import { grouped } from "@/lib/group";
 
 type Tab = "secrets" | "approvals" | "tasks" | "endpoints" | "audit";
 
@@ -92,6 +95,10 @@ export default function App() {
   /** Edits not yet written. */
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [copied, setCopied] = useState<string | null>(null);
+  /** What is typed in the search box. Empty means the whole inventory. */
+  const [query, setQuery] = useState("");
+  /** Which group's inline add form is open, if any. */
+  const [addingTo, setAddingTo] = useState<string | null>(null);
   const [result, setResult] = useState<(RunResult & { task: string }) | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -237,6 +244,9 @@ export default function App() {
     }
   }
 
+  // Groups are derived from the names, so there is nothing to keep in step.
+  const groups = grouped(refs, query);
+
   /** An empty draft is reported as such rather than as an unsaved write. */
   const statusOf = (reference: string): RowStatus | undefined =>
     drafts[reference] === "" ? "empty" : saveState[reference];
@@ -334,35 +344,95 @@ export default function App() {
               title="Secrets"
               note={`${refs.filter((r) => r.present).length} of ${refs.length} stored here`}
             >
+              {/* Search is the interface: the inventory is small enough that
+                  typing beats navigating, and an empty box is the full list. */}
+              <div className="flex items-center gap-2 border-b border-line px-4 py-2.5">
+                <Search size={14} className="shrink-0 text-muted-foreground" />
+                <input
+                  autoFocus
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === "Escape" && setQuery("")}
+                  placeholder="filter by reference or project…"
+                  className="min-w-0 flex-1 bg-transparent font-mono text-xs focus:outline-none"
+                  aria-label="Filter secrets"
+                />
+                {query && (
+                  <button
+                    onClick={() => setQuery("")}
+                    className="shrink-0 font-mono text-[10px] uppercase tracking-wider text-muted-foreground hover:text-foreground"
+                  >
+                    clear
+                  </button>
+                )}
+              </div>
+
               <AddSecret onAdded={() => void refresh()} />
-              {refs.length === 0 ? (
+
+              {groups.length === 0 ? (
                 <Empty>
-                  Nothing stored yet, and no manifest in view. Add a secret above, or
-                  start Keymaker from a project directory to see the references its
-                  .keymaker asks for.
+                  {refs.length === 0
+                    ? "Nothing stored yet. Add a secret above — name it issuer/key, like stripe/api-key, and the group appears on its own."
+                    : `Nothing matches “${query}”.`}
                 </Empty>
               ) : (
-                refs.map((r) => (
-                  <SecretRow
-                    key={r.reference}
-                    row={r}
-                    revealed={r.reference in revealed ? revealed[r.reference] : null}
-                    draft={drafts[r.reference]}
-                    status={statusOf(r.reference)}
-                    copied={copied === r.reference}
-                    onReveal={() => void reveal(r.reference)}
-                    onHide={() => hide(r.reference)}
-                    onChange={(v) => edit(r.reference, v)}
-                    onFlush={() => flush(r.reference)}
-                    onCopy={() => void copy(r.reference)}
-                    onDelete={() => void remove(r.reference)}
-                  />
+                groups.map((group) => (
+                  <div key={group.issuer}>
+                    <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-line bg-secondary/60 px-4 py-1.5 backdrop-blur">
+                      <span className="font-mono text-[11px] uppercase tracking-wider text-foreground">
+                        {group.issuer}
+                      </span>
+                      <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                        {group.stored} of {group.rows.length}
+                      </span>
+                      <div className="flex-1" />
+                      <button
+                        onClick={() =>
+                          setAddingTo(addingTo === group.issuer ? null : group.issuer)
+                        }
+                        className="text-muted-foreground hover:text-primary"
+                        title={`Add a key under ${group.issuer}`}
+                        aria-label={`Add a key under ${group.issuer}`}
+                      >
+                        <Plus size={13} />
+                      </button>
+                    </div>
+
+                    {addingTo === group.issuer && (
+                      <AddSecret
+                        prefill={`${group.issuer}/`}
+                        onAdded={() => {
+                          setAddingTo(null);
+                          void refresh();
+                        }}
+                        onCancel={() => setAddingTo(null)}
+                      />
+                    )}
+
+                    {group.rows.map((r) => (
+                      <SecretRow
+                        key={r.reference}
+                        row={r}
+                        revealed={r.reference in revealed ? revealed[r.reference] : null}
+                        draft={drafts[r.reference]}
+                        status={statusOf(r.reference)}
+                        copied={copied === r.reference}
+                        onReveal={() => void reveal(r.reference)}
+                        onHide={() => hide(r.reference)}
+                        onChange={(v) => edit(r.reference, v)}
+                        onFlush={() => flush(r.reference)}
+                        onCopy={() => void copy(r.reference)}
+                        onDelete={() => void remove(r.reference)}
+                      />
+                    ))}
+                  </div>
                 ))
               )}
             </Panel>
             <p className="font-mono text-[11px] leading-relaxed text-muted-foreground">
-              Edits save themselves a moment after you stop typing, and immediately when
-              you leave the field. This window is the only place a value can be read —
+              Name a key <span className="text-foreground">issuer/key</span> and it files
+              itself — there are no groups to create. Edits save themselves a moment after
+              you stop typing, and immediately when you leave the field. This window is the only place a value can be read —
               the CLI and the MCP surface have no such command, which is the point of
               them. Every reveal is written to the audit log.
             </p>
