@@ -69,11 +69,16 @@ export function SecretRow({
 
   return (
     <div className="border-b border-line last:border-b-0">
-      <div className="flex items-center gap-3 px-4 py-3">
+      {/* Indented under its group header, and labelled with just the key: the
+          header already says which issuer this is. */}
+      <div className="flex items-center gap-3 py-2.5 pl-9 pr-4">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="truncate font-mono text-sm text-foreground">
-              {row.reference}
+            <span
+              className="truncate font-mono text-sm text-foreground"
+              title={row.reference}
+            >
+              {row.name}
             </span>
             {!row.present && (
               <span className="shrink-0 border border-line px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
@@ -151,7 +156,7 @@ export function SecretRow({
         </div>
       </div>
       {copied && (
-        <div className="px-4 pb-2 font-mono text-[11px] text-muted-foreground">
+        <div className="pb-2 pl-9 pr-4 font-mono text-[11px] text-muted-foreground">
           on the clipboard — any process on this machine can read it
         </div>
       )}

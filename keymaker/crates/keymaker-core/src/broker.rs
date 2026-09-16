@@ -5,6 +5,7 @@
 //! in an effect or an error — never a value.
 
 use crate::approvals::Approvals;
+use crate::grants::Grants;
 use crate::audit::{Event, Log};
 use crate::clock::Clock;
 use crate::error::{Error, Result};
@@ -64,6 +65,9 @@ pub struct Broker<'a> {
     /// Shared with the GUI, so a person can answer a step-up somewhere other
     /// than the terminal the agent happens to be attached to.
     approvals: Option<Approvals<'a>>,
+    /// Which project may use which reference. Without this, any manifest
+    /// anywhere may name any reference.
+    grants: Option<Grants<'a>>,
 }
 
 impl std::fmt::Debug for Broker<'_> {
@@ -98,6 +102,7 @@ impl<'a> Broker<'a> {
             audit: Log::new(clock),
             default_uses: 1,
             approvals: None,
+            grants: None,
         }
     }
 
@@ -114,6 +119,38 @@ impl<'a> Broker<'a> {
     pub fn with_approvals(mut self, approvals: Approvals<'a>) -> Self {
         self.approvals = Some(approvals);
         self
+    }
+
+    /// Enforce which project may use which reference.
+    pub fn with_grants(mut self, grants: Grants<'a>) -> Self {
+        self.grants = Some(grants);
+        self
+    }
+
+    /// Check every reference a capability needs against the caller's location.
+    ///
+    /// Returns the first reference that is not granted, having recorded it as
+    /// waiting for a person. Checked *before* anything is read, so a use that
+    /// has not been granted never reaches the store.
+    fn ungranted(
+        &self,
+        conn: &Connection,
+        references: &[String],
+        wanted_by: &str,
+    ) -> Option<String> {
+        let grants = self.grants.as_ref()?;
+        let cwd = conn.peer.cwd.as_deref();
+        for reference in references {
+            if grants.allows(reference, cwd) {
+                continue;
+            }
+            // Only worth asking about if we know where to grant it.
+            if let Some(cwd) = cwd {
+                grants.request(reference, cwd, wanted_by);
+            }
+            return Some(reference.clone());
+        }
+        None
     }
 
     pub fn audit_log(&self) -> &Log<'a> {
@@ -337,6 +374,16 @@ impl<'a> Broker<'a> {
             Ok(c) => c.to_string(),
             Err(e) => return Response::from(&e),
         };
+
+        // Every reference this task would inject has to be granted to the
+        // directory the caller is working in.
+        let needed = self.manifest.refs_for(env).unwrap_or_default();
+        if let Some(reference) = self.ungranted(conn, &needed, &format!("task {}", task)) {
+            return Response::from(&Error::Denied(format!(
+                "`{}` is not granted to this project yet; approve it with `keymaker grant`",
+                reference
+            )));
+        }
         // The agent is blocked while this runs, so this is the window in which
         // the broker is the only party to have seen what the task wrote.
         let runner = Runner::new(self.store, self.spawner).watching_defaults();
@@ -456,6 +503,15 @@ impl<'a> Broker<'a> {
                     }
                 }
             }
+        }
+
+        if let Some(reference) =
+            self.ungranted(conn, &[endpoint.secret.clone()], &format!("endpoint {}", name))
+        {
+            return Response::from(&Error::Denied(format!(
+                "`{}` is not granted to this project yet; approve it with `keymaker grant`",
+                reference
+            )));
         }
 
         let secret = match self.store.get(&endpoint.secret) {

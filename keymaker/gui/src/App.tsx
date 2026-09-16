@@ -409,6 +409,7 @@ export default function App() {
                       />
                     )}
 
+                    <div className="border-l border-line ml-4">
                     {group.rows.map((r) => (
                       <SecretRow
                         key={r.reference}
@@ -425,6 +426,7 @@ export default function App() {
                         onDelete={() => void remove(r.reference)}
                       />
                     ))}
+                    </div>
                   </div>
                 ))
               )}

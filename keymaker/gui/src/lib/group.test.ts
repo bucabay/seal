@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { grouped, matches, splitPasted } from "./group";
+import { DEFAULT_ISSUER, grouped, matches, splitPasted } from "./group";
 import type { RefRow } from "./api";
 
 const row = (reference: string, present = true, used_by: string[] = []): RefRow => {
@@ -7,7 +7,7 @@ const row = (reference: string, present = true, used_by: string[] = []): RefRow 
   const [issuer, name] =
     at > 0 && at < reference.length - 1
       ? [reference.slice(0, at), reference.slice(at + 1)]
-      : ["ungrouped", reference];
+      : [DEFAULT_ISSUER, reference];
   return { reference, issuer, name, present, used_by };
 };
 
@@ -70,7 +70,7 @@ describe("grouped", () => {
     expect(grouped(rows, "").map((g) => g.issuer)).toEqual([
       "github",
       "stripe",
-      "ungrouped",
+      DEFAULT_ISSUER,
     ]);
   });
 
@@ -90,6 +90,15 @@ describe("grouped", () => {
 
   it("a filter drops groups with nothing in them", () => {
     expect(grouped(rows, "stripe").map((g) => g.issuer)).toEqual(["stripe"]);
+  });
+
+  it("keeps the catch-all group at the bottom", () => {
+    // Alphabetically `general` would land first; it belongs last.
+    const withGeneral = [row("scratch"), row("anthropic/api_key")];
+    expect(grouped(withGeneral, "").map((g) => g.issuer)).toEqual([
+      "anthropic",
+      DEFAULT_ISSUER,
+    ]);
   });
 
   it("a group appears as soon as a key is named into it", () => {

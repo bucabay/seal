@@ -10,7 +10,12 @@
 //! get out of step with the keys it claims to hold.
 
 /// Where a reference with no issuer is filed.
-pub const UNGROUPED: &str = "ungrouped";
+///
+/// A real place to put things rather than a failure state — "ungrouped" or
+/// "other" read as leftovers, and a key you deliberately named `scratch` is not
+/// a leftover. The reference itself is never rewritten: what you typed is what
+/// is stored, and this is only how it files.
+pub const DEFAULT_ISSUER: &str = "general";
 
 /// Split a reference into its issuer and the rest.
 ///
@@ -19,7 +24,7 @@ pub const UNGROUPED: &str = "ungrouped";
 pub fn split(reference: &str) -> (&str, &str) {
     match reference.split_once('/') {
         Some((issuer, name)) if !issuer.is_empty() && !name.is_empty() => (issuer, name),
-        _ => (UNGROUPED, reference),
+        _ => (DEFAULT_ISSUER, reference),
     }
 }
 
@@ -99,16 +104,16 @@ mod tests {
 
     #[test]
     fn something_without_an_issuer_is_filed_rather_than_refused() {
-        assert_eq!(split("looseend"), (UNGROUPED, "looseend"));
-        assert_eq!(issuer("looseend"), UNGROUPED);
+        assert_eq!(split("looseend"), (DEFAULT_ISSUER, "looseend"));
+        assert_eq!(issuer("looseend"), DEFAULT_ISSUER);
         assert_eq!(name("looseend"), "looseend");
     }
 
     #[test]
     fn a_half_written_reference_does_not_pretend_to_be_grouped() {
         // Mid-typing, `stripe/` has no name yet.
-        assert_eq!(split("stripe/"), (UNGROUPED, "stripe/"));
-        assert_eq!(split("/api-key"), (UNGROUPED, "/api-key"));
+        assert_eq!(split("stripe/"), (DEFAULT_ISSUER, "stripe/"));
+        assert_eq!(split("/api-key"), (DEFAULT_ISSUER, "/api-key"));
     }
 
     #[test]
@@ -198,6 +203,14 @@ mod tests {
     }
 
     #[test]
+    fn a_key_with_no_issuer_keeps_the_name_it_was_given() {
+        // Filing it under `general` must not rewrite what the user typed.
+        assert_eq!(name("scratch"), "scratch");
+        assert_eq!(issuer("scratch"), "general");
+        assert!(is_valid("scratch"));
+    }
+
+    #[test]
     fn grouping_needs_nothing_stored() {
         // The property that makes groups free: they are a function of the
         // names, so a group cannot disagree with the keys it holds.
@@ -205,6 +218,6 @@ mod tests {
         let mut groups: Vec<&str> = refs.iter().map(|r| issuer(r)).collect();
         groups.sort();
         groups.dedup();
-        assert_eq!(groups, vec!["github", "stripe", UNGROUPED]);
+        assert_eq!(groups, vec![DEFAULT_ISSUER, "github", "stripe"]);
     }
 }

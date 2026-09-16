@@ -1,5 +1,11 @@
 import type { RefRow } from "./api";
 
+/**
+ * Where a reference with no issuer is filed. Mirrors
+ * `keymaker_core::reference::DEFAULT_ISSUER`.
+ */
+export const DEFAULT_ISSUER = "general";
+
 export type Group = { issuer: string; rows: RefRow[]; stored: number };
 
 /**
@@ -58,5 +64,11 @@ export function grouped(rows: RefRow[], query: string): Group[] {
       }),
       stored: list.filter((r) => r.present).length,
     }))
-    .sort((a, b) => a.issuer.localeCompare(b.issuer));
+    .sort((a, b) => {
+      // Named issuers first; the catch-all sits at the bottom where it belongs,
+      // whatever it happens to be called alphabetically.
+      if (a.issuer === DEFAULT_ISSUER) return 1;
+      if (b.issuer === DEFAULT_ISSUER) return -1;
+      return a.issuer.localeCompare(b.issuer);
+    });
 }
