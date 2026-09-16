@@ -150,3 +150,26 @@ via `seal get` inline.
 
 **Consequences:** the skill is installed by `install.sh`, shipped by the brew
 formula to `share/seal/skills/seal/`, and documented in the README.
+
+## No read verb — Seal as ssh-agent for secrets
+
+**Decision:** remove `seal get`, never build `seal export`, and make `seal run`
+the only way to consume a secret. The CLI cannot emit a value. Humans read
+values in the GUI; agents never do.
+
+**Rationale:** Seal's primary user is a coding agent, and the property worth
+selling is that a value never enters the model's context. Today that is enforced
+by a *rule* in the agent skill ("never print a secret value"), which a confused,
+injected, or sloppy model ignores — silently and irreversibly, since a key in a
+transcript cannot be recalled. A capability that does not exist cannot be
+misused. `ssh-agent` is the precedent: it signs, it does not hand over the key,
+and the absence of an export verb is the security property rather than a gap.
+
+**Consequences:** `seal run` must ship before `get` is removed, or the tool has
+no consuming verb. Every script and skill using `export TOKEN="$(seal get …)"`
+must migrate. There is no bulk read, so `export` and "write a `.env` file" are
+out — both are `get` in a larger wrapper; `.env` *import* stays, as it flows the
+safe direction. The GUI becomes load-bearing as the human surface and therefore
+has to be signed. The claim stays narrow until the permissive keychain ACL is
+fixed, since `security find-generic-password` currently walks around Seal
+entirely — see [AGENT-MODEL.md](AGENT-MODEL.md).

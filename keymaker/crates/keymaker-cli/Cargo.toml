@@ -1,0 +1,16 @@
+[package]
+name = "keymaker-cli"
+description = "CLI for keymaker."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "keymaker"
+path = "src/main.rs"
+
+[dependencies]
+keymaker-core = { path = "../keymaker-core", version = "0.1.0" }
+serde_json.workspace = true

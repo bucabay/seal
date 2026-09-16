@@ -1,5 +1,11 @@
 # Plan C, revised — the broker with dotenvx's ergonomics
 
+> **Superseded in part by [PLAN-D.md](PLAN-D.md)** (2026-09-16). The two-plane
+> split and the manifest survive. Three things do not: the Phase 0 ordering (a
+> sandbox around the agent closes the same hole far more cheaply), the
+> stable-reference model (one-use handles replace it), and the absence of any
+> mediated HTTP path.
+
 Supersedes the "Possibility C" sketch in [POSSIBILITIES.md](POSSIBILITIES.md).
 Written after measuring dotenvx properly (facts verified 2026-08-30): it is the
 closest competitor, it beats today's Seal on nearly every practical axis, and

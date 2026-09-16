@@ -1,0 +1,15 @@
+[package]
+name = "keymaker-core"
+description = "Capability-mediated secret use for AI agents: the agent acts, never holds."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+sha2.workspace = true
+

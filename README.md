@@ -106,6 +106,9 @@ never write secrets to files, and consume via `seal get` inline
 
 ## Documentation
 
+- [Agent model](docs/AGENT-MODEL.md) — why there is no read verb; ssh-agent for secrets
+- [Plan D](docs/PLAN-D.md) — the three ways to use a secret without seeing it
+- [keymaker/](keymaker/) — the agent-only implementation of Plan D (separate CLI + library)
 - [Architecture](docs/ARCHITECTURE.md) — components, storage model, data flow
 - [Design decisions](docs/DECISIONS.md) — rationale for every major choice
 - [Design system](docs/DESIGN.md) — UI framework, theming, typography
