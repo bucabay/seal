@@ -435,17 +435,6 @@ export default function App() {
                       </button>
                     </div>
 
-                    {expanded && addingTo === group.issuer && (
-                      <AddSecret
-                        prefill={`${group.issuer}/`}
-                        onAdded={() => {
-                          setAddingTo(null);
-                          void refresh();
-                        }}
-                        onCancel={() => setAddingTo(null)}
-                      />
-                    )}
-
                     {expanded && (
                     <div className="border-l border-line ml-4">
                     {group.rows.map((r) => (
@@ -464,6 +453,16 @@ export default function App() {
                         onDelete={() => void remove(r.reference)}
                       />
                     ))}
+                    {/* At the foot of the group, where the key being added
+                        will appear — not at the top, above what already
+                        exists. */}
+                    {addingTo === group.issuer && (
+                      <AddSecret
+                        prefill={`${group.issuer}/`}
+                        onAdded={() => void refresh()}
+                        onCancel={() => setAddingTo(null)}
+                      />
+                    )}
                     </div>
                     )}
                   </div>
