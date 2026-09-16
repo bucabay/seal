@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Plus } from "lucide-react";
 import { api } from "@/lib/api";
+import { rawInput } from "@/lib/raw-input";
 
 /**
  * Adding a secret from the GUI.
@@ -59,6 +60,7 @@ export function AddSecret({ onAdded }: { onAdded: () => void }) {
     <form onSubmit={submit} className="border-b border-line px-4 py-3">
       <div className="flex items-center gap-2">
         <input
+          {...rawInput}
           autoFocus
           value={reference}
           onChange={(e) => setReference(e.target.value)}
@@ -67,6 +69,7 @@ export function AddSecret({ onAdded }: { onAdded: () => void }) {
           aria-label="Reference"
         />
         <input
+          {...rawInput}
           type="password"
           value={value}
           onChange={(e) => setValue(e.target.value)}

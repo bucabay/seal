@@ -1,85 +1,71 @@
-import { useState } from "react";
-import { Eye, EyeOff, Copy, Check, Trash2, Save } from "lucide-react";
-import { api, type RefRow } from "@/lib/api";
+import { Eye, EyeOff, Copy, Check, Trash2 } from "lucide-react";
+import type { RefRow } from "@/lib/api";
+import type { SaveState } from "@/hooks/use-autosave";
 import { cn } from "@/lib/utils";
+import { rawInput } from "@/lib/raw-input";
 
 const MASK = "•".repeat(24);
 
+/** A row's state in the write cycle, plus the one case that is not a write. */
+export type RowStatus = SaveState | "empty";
+
+const STATUS_LABEL: Record<RowStatus, string> = {
+  pending: "edited",
+  saving: "saving…",
+  saved: "saved",
+  error: "failed",
+  empty: "empty",
+};
+
+const STATUS_TONE: Record<RowStatus, string> = {
+  pending: "text-muted-foreground",
+  saving: "text-muted-foreground",
+  saved: "text-primary",
+  error: "text-destructive",
+  empty: "text-destructive",
+};
+
 /**
- * One reference. Revealing is deliberate and one row at a time: there is no
- * "show all", because the point of the product is that reading a value is an
- * act, not a default.
+ * One reference.
+ *
+ * Revealing is deliberate and one row at a time: the point of the product is
+ * that reading a value is an act, not a default. Editing, by contrast, saves
+ * itself — a Save button on a field you have already decided to change is just
+ * a way to lose work.
+ *
+ * The row is controlled: the draft and the revealed value live in App, so a
+ * pending edit can be flushed when the window loses focus or the list reloads.
  */
 export function SecretRow({
   row,
-  onChanged,
+  revealed,
+  draft,
+  status,
+  copied,
+  onReveal,
+  onHide,
+  onChange,
+  onFlush,
+  onCopy,
+  onDelete,
 }: {
   row: RefRow;
-  onChanged: () => void;
+  /** The revealed value, or null while hidden. */
+  revealed: string | null;
+  /** An unsaved edit, if there is one. */
+  draft?: string;
+  status?: RowStatus;
+  copied: boolean;
+  onReveal: () => void;
+  onHide: () => void;
+  onChange: (value: string) => void;
+  onFlush: () => void;
+  onCopy: () => void;
+  onDelete: () => void;
 }) {
-  const [value, setValue] = useState<string | null>(null);
-  const [draft, setDraft] = useState<string>("");
-  const [copied, setCopied] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const revealed = value !== null;
-
-  async function reveal() {
-    setError(null);
-    try {
-      const v = await api.reveal(row.reference);
-      setValue(v);
-      setDraft(v);
-    } catch (e) {
-      setError(String(e));
-    }
-  }
-
-  function hide() {
-    setValue(null);
-    setDraft("");
-  }
-
-  async function copy() {
-    const v = value ?? (await api.reveal(row.reference).catch(() => null));
-    if (v === null) return;
-    await navigator.clipboard.writeText(v);
-    setCopied(true);
-    // The clipboard is readable by any process, so say so rather than let it
-    // pass unnoticed.
-    setTimeout(() => setCopied(false), 1600);
-  }
-
-  async function save() {
-    setBusy(true);
-    setError(null);
-    try {
-      await api.save(row.reference, draft);
-      setValue(draft);
-      onChanged();
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function remove() {
-    setBusy(true);
-    setError(null);
-    try {
-      await api.remove(row.reference);
-      setValue(null);
-      onChanged();
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const dirty = revealed && draft !== value;
+  const isRevealed = revealed !== null;
+  const shown = draft ?? revealed ?? "";
+  const editable = isRevealed || !row.present;
 
   return (
     <div className="border-b border-line last:border-b-0">
@@ -102,37 +88,49 @@ export function SecretRow({
           )}
         </div>
 
-        <input
+        {/* Fixed width so the row does not jump as the label changes. */}
+        <span
           className={cn(
-            "w-[38%] shrink-0 border border-line bg-background px-2 py-1 font-mono text-xs",
-            "focus:border-primary focus:outline-none",
-            !revealed && "cursor-pointer select-none text-muted-foreground",
+            "w-14 shrink-0 text-right font-mono text-[10px] uppercase tracking-wider",
+            status ? STATUS_TONE[status] : "text-transparent",
           )}
-          value={revealed ? draft : row.present ? MASK : ""}
-          placeholder={row.present ? "" : "no value stored — type one"}
-          readOnly={!revealed && row.present}
-          onClick={() => !revealed && row.present && reveal()}
-          onChange={(e) => {
-            if (!revealed) setValue("");
-            setDraft(e.target.value);
-          }}
-          aria-label={revealed ? `Value of ${row.reference}` : `${row.reference}, hidden`}
+          aria-live="polite"
+        >
+          {status ? STATUS_LABEL[status] : ""}
+        </span>
+
+        <input
+          {...rawInput}
+          className={cn(
+            "w-[34%] shrink-0 border border-line bg-background px-2 py-1 font-mono text-xs",
+            "focus:border-primary focus:outline-none",
+            !editable && "cursor-pointer select-none text-muted-foreground",
+          )}
+          value={editable ? shown : MASK}
+          placeholder={row.present ? "" : "type a value — it saves itself"}
+          readOnly={!editable}
+          onClick={() => !isRevealed && row.present && onReveal()}
+          onChange={(e) => onChange(e.target.value)}
+          // Leaving the field is a clear sign the edit is finished; do not make
+          // the user wait out the debounce.
+          onBlur={onFlush}
+          aria-label={isRevealed ? `Value of ${row.reference}` : `${row.reference}, hidden`}
         />
 
         <div className="flex shrink-0 items-center gap-1">
           {row.present && (
             <button
-              onClick={revealed ? hide : reveal}
+              onClick={isRevealed ? onHide : onReveal}
               className="p-1.5 text-muted-foreground hover:text-foreground"
-              title={revealed ? "Hide" : "Reveal (recorded in the audit log)"}
-              aria-label={revealed ? "Hide" : "Reveal"}
+              title={isRevealed ? "Hide" : "Reveal (recorded in the audit log)"}
+              aria-label={isRevealed ? "Hide" : "Reveal"}
             >
-              {revealed ? <EyeOff size={15} /> : <Eye size={15} />}
+              {isRevealed ? <EyeOff size={15} /> : <Eye size={15} />}
             </button>
           )}
           {row.present && (
             <button
-              onClick={copy}
+              onClick={onCopy}
               className="p-1.5 text-muted-foreground hover:text-foreground"
               title="Copy to clipboard (any process can read the clipboard)"
               aria-label="Copy"
@@ -140,22 +138,10 @@ export function SecretRow({
               {copied ? <Check size={15} className="text-primary" /> : <Copy size={15} />}
             </button>
           )}
-          {(dirty || (!row.present && draft)) && (
-            <button
-              onClick={save}
-              disabled={busy}
-              className="p-1.5 text-primary hover:opacity-80 disabled:opacity-40"
-              title="Save"
-              aria-label="Save"
-            >
-              <Save size={15} />
-            </button>
-          )}
           {row.present && (
             <button
-              onClick={remove}
-              disabled={busy}
-              className="p-1.5 text-muted-foreground hover:text-destructive disabled:opacity-40"
+              onClick={onDelete}
+              className="p-1.5 text-muted-foreground hover:text-destructive"
               title="Delete"
               aria-label="Delete"
             >
@@ -164,9 +150,6 @@ export function SecretRow({
           )}
         </div>
       </div>
-      {error && (
-        <div className="px-4 pb-2 font-mono text-[11px] text-destructive">{error}</div>
-      )}
       {copied && (
         <div className="px-4 pb-2 font-mono text-[11px] text-muted-foreground">
           on the clipboard — any process on this machine can read it

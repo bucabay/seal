@@ -25,7 +25,8 @@ import {
   type TaskRow,
 } from "@/lib/api";
 import { cn, describeEvent, when } from "@/lib/utils";
-import { SecretRow } from "@/components/secret-row";
+import { SecretRow, type RowStatus } from "@/components/secret-row";
+import { useAutosave } from "@/hooks/use-autosave";
 import { AddSecret } from "@/components/add-secret";
 
 type Tab = "secrets" | "approvals" | "tasks" | "endpoints" | "audit";
@@ -86,8 +87,40 @@ export default function App() {
   const [env, setEnv] = useState("default");
   const [health, setHealth] = useState<Health | null>(null);
   const [running, setRunning] = useState<string | null>(null);
+  /** Revealed values, by reference. Membership is what "revealed" means. */
+  const [revealed, setRevealed] = useState<Record<string, string>>({});
+  /** Edits not yet written. */
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [copied, setCopied] = useState<string | null>(null);
   const [result, setResult] = useState<(RunResult & { task: string }) | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // An empty value is a half-finished edit, not an instruction to store
+  // nothing — the backend refuses it anyway, so never send one.
+  const commit = useCallback(async (reference: string, value: string) => {
+    try {
+      await api.save(reference, value);
+    } catch (e) {
+      setError(String(e));
+      throw e;
+    }
+    // Keep the value on screen. It is already there — the user just typed it —
+    // and clearing the field after a successful save reads as losing the edit.
+    setRevealed((r) => ({ ...r, [reference]: value }));
+    setDrafts((d) => {
+      const { [reference]: _, ...rest } = d;
+      return rest;
+    });
+    // A reference that had nothing behind it now does, so drop the badge
+    // without waiting for a reload.
+    setRefs((rows) =>
+      rows.map((row) =>
+        row.reference === reference && !row.present ? { ...row, present: true } : row,
+      ),
+    );
+  }, []);
+
+  const { state: saveState, schedule, flush, flushAll } = useAutosave<string>(commit);
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -122,6 +155,19 @@ export default function App() {
     document.documentElement.classList.toggle("dark", dark);
   }, [dark]);
 
+  // A pending edit must not be lost to a window switch, a tab change, or the
+  // app closing. Each of these is a moment the user considers the edit done.
+  useEffect(() => {
+    window.addEventListener("blur", flushAll);
+    window.addEventListener("beforeunload", flushAll);
+    return () => {
+      window.removeEventListener("blur", flushAll);
+      window.removeEventListener("beforeunload", flushAll);
+    };
+  }, [flushAll]);
+
+  useEffect(() => () => flushAll(), [tab, flushAll]);
+
   // An agent blocked on a decision is waiting on a person, so poll rather than
   // make them hit refresh. Cheap: it reads one small file.
   useEffect(() => {
@@ -139,6 +185,56 @@ export default function App() {
       setError(String(err));
     }
   }
+
+  async function reveal(reference: string) {
+    try {
+      const value = await api.reveal(reference);
+      setRevealed((r) => ({ ...r, [reference]: value }));
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  function hide(reference: string) {
+    // Flush first: hiding a row with an unsaved edit would discard it.
+    flush(reference);
+    setRevealed((r) => {
+      const { [reference]: _, ...rest } = r;
+      return rest;
+    });
+  }
+
+  function edit(reference: string, value: string) {
+    setDrafts((d) => ({ ...d, [reference]: value }));
+    // An empty field is a half-finished edit; the row says "empty" and nothing
+    // is written until there is something to write.
+    if (value !== "") schedule(reference, value);
+  }
+
+  async function copy(reference: string) {
+    try {
+      const value = revealed[reference] ?? (await api.reveal(reference));
+      await navigator.clipboard.writeText(value);
+      setCopied(reference);
+      setTimeout(() => setCopied((c) => (c === reference ? null : c)), 1600);
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  async function remove(reference: string) {
+    try {
+      await api.remove(reference);
+      hide(reference);
+      await refresh();
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  /** An empty draft is reported as such rather than as an unsaved write. */
+  const statusOf = (reference: string): RowStatus | undefined =>
+    drafts[reference] === "" ? "empty" : saveState[reference];
 
   async function run(task: string) {
     setRunning(task);
@@ -242,14 +338,28 @@ export default function App() {
                 </Empty>
               ) : (
                 refs.map((r) => (
-                  <SecretRow key={r.reference} row={r} onChanged={() => void refresh()} />
+                  <SecretRow
+                    key={r.reference}
+                    row={r}
+                    revealed={r.reference in revealed ? revealed[r.reference] : null}
+                    draft={drafts[r.reference]}
+                    status={statusOf(r.reference)}
+                    copied={copied === r.reference}
+                    onReveal={() => void reveal(r.reference)}
+                    onHide={() => hide(r.reference)}
+                    onChange={(v) => edit(r.reference, v)}
+                    onFlush={() => flush(r.reference)}
+                    onCopy={() => void copy(r.reference)}
+                    onDelete={() => void remove(r.reference)}
+                  />
                 ))
               )}
             </Panel>
             <p className="font-mono text-[11px] leading-relaxed text-muted-foreground">
-              This window is the only place a value can be read. The CLI and the MCP
-              surface have no such command — that is the point of them. Every reveal is
-              written to the audit log.
+              Edits save themselves a moment after you stop typing, and immediately when
+              you leave the field. This window is the only place a value can be read —
+              the CLI and the MCP surface have no such command, which is the point of
+              them. Every reveal is written to the audit log.
             </p>
           </>
         )}
