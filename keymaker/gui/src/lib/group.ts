@@ -72,3 +72,41 @@ export function grouped(rows: RefRow[], query: string): Group[] {
       return a.issuer.localeCompare(b.issuer);
     });
 }
+
+const COLLAPSED_KEY = "keymaker.collapsed-groups";
+
+/**
+ * Should this group's rows be on screen?
+ *
+ * A filter overrides a collapse. Hiding a search result behind a collapsed
+ * header is worse than useless — the user has said what they are looking for,
+ * and an empty-looking result would read as "not here".
+ */
+export function isExpanded(
+  issuer: string,
+  collapsed: ReadonlySet<string>,
+  query: string,
+): boolean {
+  if (query.trim()) return true;
+  return !collapsed.has(issuer);
+}
+
+/** Collapsed groups survive a restart; a desktop app should remember. */
+export function loadCollapsed(): Set<string> {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_KEY);
+    return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+  } catch {
+    // Storage can be unavailable or hold nonsense; an empty set means
+    // everything shows, which is the safe way to be wrong.
+    return new Set();
+  }
+}
+
+export function saveCollapsed(collapsed: ReadonlySet<string>): void {
+  try {
+    localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...collapsed]));
+  } catch {
+    // Not remembering is a small loss; failing to collapse is not.
+  }
+}

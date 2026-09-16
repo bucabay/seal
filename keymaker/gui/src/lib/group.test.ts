@@ -1,5 +1,13 @@
-import { describe, expect, it } from "vitest";
-import { DEFAULT_ISSUER, grouped, matches, splitPasted } from "./group";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  DEFAULT_ISSUER,
+  grouped,
+  isExpanded,
+  loadCollapsed,
+  matches,
+  saveCollapsed,
+  splitPasted,
+} from "./group";
 import type { RefRow } from "./api";
 
 const row = (reference: string, present = true, used_by: string[] = []): RefRow => {
@@ -111,5 +119,51 @@ describe("grouped", () => {
 
   it("filtering to nothing yields no groups rather than empty ones", () => {
     expect(grouped(rows, "no-such-thing")).toEqual([]);
+  });
+});
+
+describe("collapsing", () => {
+  // jsdom hands back a `localStorage` whose methods are missing, so stub a
+  // working one. The point here is this module's logic, not jsdom's storage.
+  beforeEach(() => {
+    const store = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+      clear: () => store.clear(),
+    });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("a collapsed group is hidden, an untouched one is not", () => {
+    const collapsed = new Set(["stripe"]);
+    expect(isExpanded("stripe", collapsed, "")).toBe(false);
+    expect(isExpanded("github", collapsed, "")).toBe(true);
+  });
+
+  it("a filter overrides a collapse", () => {
+    // A search result behind a collapsed header reads as "not here".
+    const collapsed = new Set(["stripe"]);
+    expect(isExpanded("stripe", collapsed, "sk_live")).toBe(true);
+    expect(isExpanded("stripe", collapsed, "   ")).toBe(false);
+  });
+
+  it("remembers across a restart", () => {
+    saveCollapsed(new Set(["stripe", "aws"]));
+    expect(loadCollapsed()).toEqual(new Set(["stripe", "aws"]));
+  });
+
+  it("nonsense in storage means everything shows", () => {
+    localStorage.setItem("keymaker.collapsed-groups", "not json");
+    expect(loadCollapsed()).toEqual(new Set());
+  });
+
+  it("storage being unavailable is survivable", () => {
+    // A private window, or a webview with storage disabled. Not remembering is
+    // a small loss; throwing on startup is not.
+    vi.stubGlobal("localStorage", undefined);
+    expect(loadCollapsed()).toEqual(new Set());
+    expect(() => saveCollapsed(new Set(["stripe"]))).not.toThrow();
   });
 });

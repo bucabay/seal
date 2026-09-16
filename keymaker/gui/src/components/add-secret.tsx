@@ -1,19 +1,19 @@
 import { useEffect, useRef, useState } from "react";
-import { Plus } from "lucide-react";
+import { Plus, Check } from "lucide-react";
 import { api } from "@/lib/api";
 import { rawInput } from "@/lib/raw-input";
 import { splitPasted } from "@/lib/group";
 
 /**
- * Adding a secret.
+ * Adding secrets, one after another.
  *
- * Two fields, but one paste fills both: putting `stripe/api-key sk_xxx` into
- * the reference box splits it, and the value lands in the masked field rather
- * than sitting in plain text where it was typed.
+ * Saving does not close the form. Adding keys is something people do in runs —
+ * pasting a handful out of a provider's dashboard — so Enter stores this one
+ * and leaves the cursor ready for the next. The saved key drops into its group
+ * behind the form as soon as it lands.
  *
- * There is no group to choose. The issuer is the part before the first slash,
- * so naming a key `stripe/anything` files it under Stripe and the group appears
- * on its own.
+ * One paste fills both fields: `stripe/api-key sk_xxx` splits, and the value
+ * goes straight to the masked field rather than sitting in plain text.
  */
 export function AddSecret({
   prefill,
@@ -30,7 +30,18 @@ export function AddSecret({
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [justAdded, setJustAdded] = useState<string | null>(null);
+  const referenceField = useRef<HTMLInputElement>(null);
   const valueField = useRef<HTMLInputElement>(null);
+
+  /** Put the cursor after the prefix, ready for the key name. */
+  function focusReference() {
+    const field = referenceField.current;
+    if (!field) return;
+    field.focus();
+    const end = field.value.length;
+    field.setSelectionRange(end, end);
+  }
 
   useEffect(() => {
     if (prefill !== undefined) {
@@ -39,13 +50,17 @@ export function AddSecret({
     }
   }, [prefill]);
 
-  /** Split a pasted `reference value` so the value never sits in a plain field. */
+  // Whenever the form opens, the cursor belongs in the reference field —
+  // after `stripe/` when adding inside a group, not in the value.
+  useEffect(() => {
+    if (open) focusReference();
+  }, [open]);
+
   function takeReference(text: string) {
     const { reference: ref, value: pasted } = splitPasted(text);
     setReference(ref);
     if (pasted !== undefined) {
       setValue(pasted);
-      // Move on, so the next keystroke does not land back in the reference.
       valueField.current?.focus();
     }
   }
@@ -55,6 +70,7 @@ export function AddSecret({
     setReference("");
     setValue("");
     setError(null);
+    setJustAdded(null);
     onCancel?.();
   }
 
@@ -64,19 +80,25 @@ export function AddSecret({
     const ref = reference.trim();
     if (!ref) {
       setError("a reference is needed, for example stripe/api-key");
+      focusReference();
       return;
     }
     if (!value) {
       setError("a value is needed");
+      valueField.current?.focus();
       return;
     }
     setBusy(true);
     try {
       await api.save(ref, value);
-      close();
+      // Stay open and reset for the next one. Back to the prefix when adding
+      // inside a group, since the next key is probably the same issuer.
+      setReference(prefill ?? "");
+      setValue("");
+      setJustAdded(ref);
+      focusReference();
       onAdded();
     } catch (err) {
-      // The backend does the real validation; show what it said.
       setError(String(err).replace(/^.*?constraint violation: /, ""));
     } finally {
       setBusy(false);
@@ -102,7 +124,7 @@ export function AddSecret({
       <div className="flex items-center gap-2">
         <input
           {...rawInput}
-          autoFocus={prefill === undefined || prefill === ""}
+          ref={referenceField}
           value={reference}
           onChange={(e) => takeReference(e.target.value)}
           onKeyDown={(e) => e.key === "Escape" && close()}
@@ -114,11 +136,10 @@ export function AddSecret({
           {...rawInput}
           ref={valueField}
           type="password"
-          autoFocus={!!prefill}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => e.key === "Escape" && close()}
-          placeholder="value"
+          placeholder="value — enter to save"
           className="w-[34%] shrink-0 border border-line bg-background px-2 py-1 font-mono text-xs focus:border-primary focus:outline-none"
           aria-label="Value"
         />
@@ -134,10 +155,17 @@ export function AddSecret({
           onClick={close}
           className="shrink-0 px-1 font-mono text-[11px] uppercase tracking-wider text-muted-foreground hover:text-foreground"
         >
-          cancel
+          done
         </button>
       </div>
-      {error && <div className="mt-2 font-mono text-[11px] text-destructive">{error}</div>}
+      {error ? (
+        <div className="mt-2 font-mono text-[11px] text-destructive">{error}</div>
+      ) : justAdded ? (
+        <div className="mt-2 flex items-center gap-1.5 font-mono text-[11px] text-primary">
+          <Check size={12} />
+          added {justAdded} — next one, or `done` to finish
+        </div>
+      ) : null}
     </form>
   );
 }

@@ -15,6 +15,8 @@ import {
   Lock,
   Search,
   Plus,
+  ChevronRight,
+  ChevronDown,
 } from "lucide-react";
 import {
   api,
@@ -30,7 +32,7 @@ import { cn, describeEvent, when } from "@/lib/utils";
 import { SecretRow, type RowStatus } from "@/components/secret-row";
 import { useAutosave } from "@/hooks/use-autosave";
 import { AddSecret } from "@/components/add-secret";
-import { grouped } from "@/lib/group";
+import { grouped, isExpanded, loadCollapsed, saveCollapsed } from "@/lib/group";
 
 type Tab = "secrets" | "approvals" | "tasks" | "endpoints" | "audit";
 
@@ -99,6 +101,8 @@ export default function App() {
   const [query, setQuery] = useState("");
   /** Which group's inline add form is open, if any. */
   const [addingTo, setAddingTo] = useState<string | null>(null);
+  /** Groups the user has folded away. Remembered across restarts. */
+  const [collapsed, setCollapsed] = useState<Set<string>>(loadCollapsed);
   const [result, setResult] = useState<(RunResult & { task: string }) | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -247,6 +251,15 @@ export default function App() {
   // Groups are derived from the names, so there is nothing to keep in step.
   const groups = grouped(refs, query);
 
+  function toggleGroup(issuer: string) {
+    setCollapsed((current) => {
+      const next = new Set(current);
+      if (!next.delete(issuer)) next.add(issuer);
+      saveCollapsed(next);
+      return next;
+    });
+  }
+
   /** An empty draft is reported as such rather than as an unsaved write. */
   const statusOf = (reference: string): RowStatus | undefined =>
     drafts[reference] === "" ? "empty" : saveState[reference];
@@ -376,21 +389,45 @@ export default function App() {
                     : `Nothing matches “${query}”.`}
                 </Empty>
               ) : (
-                groups.map((group) => (
+                groups.map((group) => {
+                  const expanded = isExpanded(group.issuer, collapsed, query);
+                  return (
                   <div key={group.issuer}>
-                    <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-line bg-secondary/60 px-4 py-1.5 backdrop-blur">
-                      <span className="font-mono text-[11px] uppercase tracking-wider text-foreground">
-                        {group.issuer}
-                      </span>
-                      <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                        {group.stored} of {group.rows.length}
-                      </span>
-                      <div className="flex-1" />
+                    <div className="sticky top-0 z-10 flex items-center border-b border-line bg-secondary/60 backdrop-blur">
+                      {/* The whole header is the toggle; the add button sits
+                          outside it so a click there does not fold the group. */}
                       <button
-                        onClick={() =>
-                          setAddingTo(addingTo === group.issuer ? null : group.issuer)
-                        }
-                        className="text-muted-foreground hover:text-primary"
+                        onClick={() => toggleGroup(group.issuer)}
+                        className="flex min-w-0 flex-1 items-center gap-2 px-4 py-1.5 text-left hover:bg-secondary"
+                        aria-expanded={expanded}
+                        aria-label={`${expanded ? "Collapse" : "Expand"} ${group.issuer}`}
+                      >
+                        {expanded ? (
+                          <ChevronDown size={13} className="shrink-0 text-muted-foreground" />
+                        ) : (
+                          <ChevronRight size={13} className="shrink-0 text-muted-foreground" />
+                        )}
+                        <span className="font-mono text-[11px] uppercase tracking-wider text-foreground">
+                          {group.issuer}
+                        </span>
+                        <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                          {group.stored} of {group.rows.length}
+                        </span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          // Adding into a folded group would put the form where
+                          // its result cannot be seen.
+                          setCollapsed((c) => {
+                            if (!c.has(group.issuer)) return c;
+                            const next = new Set(c);
+                            next.delete(group.issuer);
+                            saveCollapsed(next);
+                            return next;
+                          });
+                          setAddingTo(addingTo === group.issuer ? null : group.issuer);
+                        }}
+                        className="px-4 py-1.5 text-muted-foreground hover:text-primary"
                         title={`Add a key under ${group.issuer}`}
                         aria-label={`Add a key under ${group.issuer}`}
                       >
@@ -398,7 +435,7 @@ export default function App() {
                       </button>
                     </div>
 
-                    {addingTo === group.issuer && (
+                    {expanded && addingTo === group.issuer && (
                       <AddSecret
                         prefill={`${group.issuer}/`}
                         onAdded={() => {
@@ -409,6 +446,7 @@ export default function App() {
                       />
                     )}
 
+                    {expanded && (
                     <div className="border-l border-line ml-4">
                     {group.rows.map((r) => (
                       <SecretRow
@@ -427,8 +465,10 @@ export default function App() {
                       />
                     ))}
                     </div>
+                    )}
                   </div>
-                ))
+                  );
+                })
               )}
             </Panel>
             <p className="font-mono text-[11px] leading-relaxed text-muted-foreground">
