@@ -1,0 +1,35 @@
+name: keymaker
+
+on:
+  push:
+    paths: ['keymaker/**', '.github/workflows/keymaker.yml']
+  pull_request:
+    paths: ['keymaker/**', '.github/workflows/keymaker.yml']
+
+defaults:
+  run:
+    working-directory: keymaker
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        # The jail is platform code with platform-gated tests, so both must run.
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: keymaker
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - name: CLI must refuse to read a secret
+        run: |
+          cargo build -q
+          ! ./target/debug/keymaker get anything/at-all

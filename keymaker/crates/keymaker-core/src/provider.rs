@@ -19,8 +19,13 @@ use std::collections::BTreeMap;
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Injection {
     /// `format` must contain `{secret}`, e.g. `Bearer {secret}`.
-    Header { name: String, format: String },
-    Query { name: String },
+    Header {
+        name: String,
+        format: String,
+    },
+    Query {
+        name: String,
+    },
 }
 
 impl Injection {
@@ -71,10 +76,7 @@ impl FieldSpec {
             FieldType::Str => v.is_string(),
             FieldType::Bool => v.is_boolean(),
             FieldType::Number => v.is_number(),
-            FieldType::Uint32 => v
-                .as_u64()
-                .map(|n| n <= u32::MAX as u64)
-                .unwrap_or(false),
+            FieldType::Uint32 => v.as_u64().map(|n| n <= u32::MAX as u64).unwrap_or(false),
         }
     }
 }
@@ -106,7 +108,7 @@ pub struct Endpoint {
 }
 
 /// What the agent submits. It names an endpoint; it cannot describe one.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct RequestDraft {
     pub endpoint: String,
     #[serde(default)]
@@ -155,7 +157,8 @@ impl CheckedRequest {
 fn safe_path_param(v: &str) -> bool {
     !v.is_empty()
         && v.len() <= 256
-        && v.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+        && v.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
         && v != "."
         && v != ".."
 }
@@ -204,7 +207,10 @@ impl Endpoint {
         }
 
         // --- headers ----------------------------------------------------
-        let reserved = self.inject.reserved_header().map(|h| h.to_ascii_lowercase());
+        let reserved = self
+            .inject
+            .reserved_header()
+            .map(|h| h.to_ascii_lowercase());
         let mut headers = BTreeMap::new();
         for (name, value) in &draft.headers {
             let lower = name.to_ascii_lowercase();
@@ -214,8 +220,15 @@ impl Endpoint {
                     name
                 )));
             }
-            if !self.allow_headers.iter().any(|a| a.to_ascii_lowercase() == lower) {
-                return Err(Error::Constraint(format!("header `{}` is not allowed", name)));
+            if !self
+                .allow_headers
+                .iter()
+                .any(|a| a.to_ascii_lowercase() == lower)
+            {
+                return Err(Error::Constraint(format!(
+                    "header `{}` is not allowed",
+                    name
+                )));
             }
             if value.bytes().any(|b| b == b'\r' || b == b'\n') {
                 return Err(Error::Constraint(format!(
@@ -243,9 +256,7 @@ impl Endpoint {
                 let spec = FieldSpec::parse(spec_src)?;
                 match draft.body.get(key) {
                     None if spec.optional => {}
-                    None => {
-                        return Err(Error::Constraint(format!("missing body field `{}`", key)))
-                    }
+                    None => return Err(Error::Constraint(format!("missing body field `{}`", key))),
                     Some(v) => {
                         if !spec.accepts(v) {
                             return Err(Error::Constraint(format!(
@@ -412,9 +423,12 @@ inject = { kind = "header", name = "Authorization", format = "Bearer {secret}" }
     fn refund_draft() -> RequestDraft {
         RequestDraft {
             endpoint: "stripe.refund".into(),
-            body: [("amount".into(), json!(500)), ("charge".into(), json!("ch_1"))]
-                .into_iter()
-                .collect(),
+            body: [
+                ("amount".into(), json!(500)),
+                ("charge".into(), json!("ch_1")),
+            ]
+            .into_iter()
+            .collect(),
             ..Default::default()
         }
     }
@@ -427,7 +441,10 @@ inject = { kind = "header", name = "Authorization", format = "Bearer {secret}" }
 
         assert_eq!(req.method, "POST");
         assert_eq!(req.url, "https://api.stripe.com/v1/refunds");
-        assert_eq!(req.headers.get("Authorization").unwrap(), "Bearer sk_live_TESTVALUE");
+        assert_eq!(
+            req.headers.get("Authorization").unwrap(),
+            "Bearer sk_live_TESTVALUE"
+        );
         assert!(req.body.unwrap().contains("ch_1"));
     }
 
@@ -459,12 +476,14 @@ inject = { kind = "header", name = "Authorization", format = "Bearer {secret}" }
         let cat = catalog();
         let ep = cat.get("stripe.refund").unwrap();
         let mut d = refund_draft();
-        d.headers.insert("Authorization".into(), "Bearer attacker".into());
+        d.headers
+            .insert("Authorization".into(), "Bearer attacker".into());
         assert!(matches!(ep.check(&d), Err(Error::Constraint(_))));
 
         // Case must not be a way around it.
         let mut d2 = refund_draft();
-        d2.headers.insert("authorization".into(), "Bearer attacker".into());
+        d2.headers
+            .insert("authorization".into(), "Bearer attacker".into());
         assert!(matches!(ep.check(&d2), Err(Error::Constraint(_))));
     }
 
@@ -492,8 +511,10 @@ inject = { kind = "header", name = "Authorization", format = "Bearer {secret}" }
         let cat = catalog();
         let ep = cat.get("stripe.refund").unwrap();
         let mut d = refund_draft();
-        d.headers
-            .insert("Idempotency-Key".into(), "a\r\nAuthorization: Bearer evil".into());
+        d.headers.insert(
+            "Idempotency-Key".into(),
+            "a\r\nAuthorization: Bearer evil".into(),
+        );
         assert!(matches!(ep.check(&d), Err(Error::Constraint(_))));
     }
 
@@ -528,11 +549,17 @@ inject = { kind = "header", name = "Authorization", format = "Bearer {secret}" }
 
         let mut d2 = refund_draft();
         d2.body.insert("amount".into(), json!(-1));
-        assert!(matches!(ep.check(&d2), Err(Error::Constraint(_))), "uint32 rejects negatives");
+        assert!(
+            matches!(ep.check(&d2), Err(Error::Constraint(_))),
+            "uint32 rejects negatives"
+        );
 
         let mut d3 = refund_draft();
         d3.body.insert("amount".into(), json!(5_000_000_000u64));
-        assert!(matches!(ep.check(&d3), Err(Error::Constraint(_))), "uint32 rejects overflow");
+        assert!(
+            matches!(ep.check(&d3), Err(Error::Constraint(_))),
+            "uint32 rejects overflow"
+        );
     }
 
     #[test]
@@ -550,7 +577,9 @@ inject = { kind = "header", name = "Authorization", format = "Bearer {secret}" }
         let ep = cat.get("stripe.charge_get").unwrap();
         let d = RequestDraft {
             endpoint: "stripe.charge_get".into(),
-            path_params: [("id".to_string(), "ch_123".to_string())].into_iter().collect(),
+            path_params: [("id".to_string(), "ch_123".to_string())]
+                .into_iter()
+                .collect(),
             ..Default::default()
         };
         let req = ep.build(&d, SECRET).unwrap();
@@ -561,7 +590,15 @@ inject = { kind = "header", name = "Authorization", format = "Bearer {secret}" }
     fn a_path_parameter_cannot_walk_to_another_endpoint() {
         let cat = catalog();
         let ep = cat.get("stripe.charge_get").unwrap();
-        for evil in ["../payouts", "ch/../../v1/payouts", "..", ".", "a/b", "a%2Fb", ""] {
+        for evil in [
+            "../payouts",
+            "ch/../../v1/payouts",
+            "..",
+            ".",
+            "a/b",
+            "a%2Fb",
+            "",
+        ] {
             let d = RequestDraft {
                 endpoint: "stripe.charge_get".into(),
                 path_params: [("id".to_string(), evil.to_string())].into_iter().collect(),
@@ -579,7 +616,10 @@ inject = { kind = "header", name = "Authorization", format = "Bearer {secret}" }
     fn a_missing_path_parameter_is_rejected() {
         let cat = catalog();
         let ep = cat.get("stripe.charge_get").unwrap();
-        let d = RequestDraft { endpoint: "stripe.charge_get".into(), ..Default::default() };
+        let d = RequestDraft {
+            endpoint: "stripe.charge_get".into(),
+            ..Default::default()
+        };
         assert!(matches!(ep.check(&d), Err(Error::Constraint(_))));
     }
 
@@ -589,7 +629,9 @@ inject = { kind = "header", name = "Authorization", format = "Bearer {secret}" }
         let ep = cat.get("stripe.charge_get").unwrap();
         let d = RequestDraft {
             endpoint: "stripe.charge_get".into(),
-            path_params: [("id".to_string(), "ch_1".to_string())].into_iter().collect(),
+            path_params: [("id".to_string(), "ch_1".to_string())]
+                .into_iter()
+                .collect(),
             body: [("amount".to_string(), json!(1))].into_iter().collect(),
             ..Default::default()
         };
@@ -630,7 +672,10 @@ inject = { kind = "query", name = "api_key" }
 "#;
         let cat = Catalog::from_toml(src).unwrap();
         let ep = cat.get("legacy.ping").unwrap();
-        let d = RequestDraft { endpoint: "legacy.ping".into(), ..Default::default() };
+        let d = RequestDraft {
+            endpoint: "legacy.ping".into(),
+            ..Default::default()
+        };
         let req = ep.build(&d, "a b/c").unwrap();
         assert_eq!(req.url, "https://api.legacy.test/ping?api_key=a%20b%2Fc");
     }
@@ -663,7 +708,10 @@ inject = { kind = "header", name = "Authorization", format = "Bearer nothing" }
     fn field_specs_parse_and_reject_unknown_types() {
         assert_eq!(
             FieldSpec::parse("string").unwrap(),
-            FieldSpec { ty: FieldType::Str, optional: false }
+            FieldSpec {
+                ty: FieldType::Str,
+                optional: false
+            }
         );
         assert!(FieldSpec::parse("string?").unwrap().optional);
         assert!(FieldSpec::parse("blob").is_err());

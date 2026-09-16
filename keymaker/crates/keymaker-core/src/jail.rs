@@ -36,7 +36,11 @@ pub const CREDENTIAL_TOOLS: &[&str] = &[
 
 /// Link-local metadata endpoints. Reaching these yields cloud credentials
 /// without touching the filesystem at all.
-pub const METADATA_HOSTS: &[&str] = &["169.254.169.254", "fd00:ec2::254", "metadata.google.internal"];
+pub const METADATA_HOSTS: &[&str] = &[
+    "169.254.169.254",
+    "fd00:ec2::254",
+    "metadata.google.internal",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -103,7 +107,12 @@ impl Profile {
                 }
                 w
             },
-            readable: vec!["/usr".into(), "/bin".into(), "/sbin".into(), "/System".into()],
+            readable: vec![
+                "/usr".into(),
+                "/bin".into(),
+                "/sbin".into(),
+                "/System".into(),
+            ],
             deny_read: CREDENTIAL_PATHS.iter().map(|p| expand(p)).collect(),
             deny_exec: CREDENTIAL_TOOLS.iter().map(|s| s.to_string()).collect(),
             deny_hosts: METADATA_HOSTS.iter().map(|s| s.to_string()).collect(),
@@ -137,7 +146,10 @@ impl Profile {
                 p.push_str("(allow file-map-executable file-read-metadata)\n");
                 p.push_str("(allow file-read* (literal \"/\"))\n");
                 for r in &self.readable {
-                    p.push_str(&format!("(allow file-read* (subpath \"{}\"))\n", sbpl_quote(r)));
+                    p.push_str(&format!(
+                        "(allow file-read* (subpath \"{}\"))\n",
+                        sbpl_quote(r)
+                    ));
                 }
                 for w in &self.writable {
                     p.push_str(&format!(
@@ -153,7 +165,10 @@ impl Profile {
 
         p.push_str("\n; credential stores\n");
         for d in &self.deny_read {
-            p.push_str(&format!("(deny file-read* (subpath \"{}\"))\n", sbpl_quote(d)));
+            p.push_str(&format!(
+                "(deny file-read* (subpath \"{}\"))\n",
+                sbpl_quote(d)
+            ));
         }
         p.push_str("\n; tools that read credential stores\n");
         for d in &self.deny_exec {
@@ -266,7 +281,9 @@ mod tests {
     #[test]
     fn the_generated_profile_is_accepted_by_sandbox_exec() {
         for profile in [Profile::shield("/tmp"), Profile::strict("/tmp")] {
-            let argv = profile.wrap_command(&["/usr/bin/true".to_string()]).unwrap();
+            let argv = profile
+                .wrap_command(&["/usr/bin/true".to_string()])
+                .unwrap();
             let out = std::process::Command::new(&argv[0])
                 .args(&argv[1..])
                 .output()
@@ -288,10 +305,7 @@ mod tests {
         let profile = Profile::shield("/tmp");
         let home = std::env::var("HOME").unwrap();
         let argv = profile
-            .wrap_command(&[
-                "/bin/ls".to_string(),
-                format!("{}/Library/Keychains", home),
-            ])
+            .wrap_command(&["/bin/ls".to_string(), format!("{}/Library/Keychains", home)])
             .unwrap();
         let out = std::process::Command::new(&argv[0])
             .args(&argv[1..])
@@ -309,7 +323,10 @@ mod tests {
         let sb = Profile::shield("/work").to_seatbelt();
         let allow = sb.find("(allow default)").expect("allow default");
         let deny = sb.find("(deny file-read*").expect("a deny rule");
-        assert!(allow < deny, "a deny before the blanket allow would be overridden");
+        assert!(
+            allow < deny,
+            "a deny before the blanket allow would be overridden"
+        );
     }
 
     #[test]
@@ -381,8 +398,16 @@ mod tests {
     #[test]
     fn the_quote_counter_itself_is_right() {
         assert_eq!(unescaped_quotes(r#""a""#), 2);
-        assert_eq!(unescaped_quotes(r#""a\"b""#), 2, "an escaped quote is not a delimiter");
-        assert_eq!(unescaped_quotes(r#""a\\""#), 2, "an escaped backslash does not escape the quote");
+        assert_eq!(
+            unescaped_quotes(r#""a\"b""#),
+            2,
+            "an escaped quote is not a delimiter"
+        );
+        assert_eq!(
+            unescaped_quotes(r#""a\\""#),
+            2,
+            "an escaped backslash does not escape the quote"
+        );
     }
 
     #[test]
@@ -398,7 +423,10 @@ mod tests {
         assert!(plan.read_write.contains(&"/work".to_string()));
         assert_eq!(plan.denied, p.deny_read);
         assert_eq!(plan.denied_exec, p.deny_exec);
-        assert!(plan.unshare_net, "metadata blocking needs its own namespace");
+        assert!(
+            plan.unshare_net,
+            "metadata blocking needs its own namespace"
+        );
     }
 
     #[test]

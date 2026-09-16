@@ -116,7 +116,12 @@ pub struct Source<'a> {
 
 impl<'a> Source<'a> {
     pub fn new(store: &'a dyn SecretStore, clock: &'a dyn Clock) -> Self {
-        Source { store, clock, exchangers: Vec::new(), require_ephemeral: false }
+        Source {
+            store,
+            clock,
+            exchangers: Vec::new(),
+            require_ephemeral: false,
+        }
     }
 
     pub fn with_exchanger(mut self, e: Box<dyn Exchanger + 'a>) -> Self {
@@ -163,7 +168,10 @@ pub struct MockExchanger {
 
 impl MockExchanger {
     pub fn new(prefix: impl Into<String>, max_ttl: u64) -> Self {
-        MockExchanger { prefix: prefix.into(), max_ttl }
+        MockExchanger {
+            prefix: prefix.into(),
+            max_ttl,
+        }
     }
 }
 
@@ -175,7 +183,11 @@ impl Exchanger for MockExchanger {
     fn exchange(&self, base: &Secret, req: &ExchangeRequest, now: u64) -> Result<ShortLived> {
         let ttl = req.ttl.min(self.max_ttl).max(1);
         Ok(ShortLived {
-            value: Secret::new(format!("tmp_{}_{}", &base.expose()[..3.min(base.len())], now)),
+            value: Secret::new(format!(
+                "tmp_{}_{}",
+                &base.expose()[..3.min(base.len())],
+                now
+            )),
             expires_at: now + ttl,
             scopes: req.scopes.clone(),
             audience: req.audience.clone(),
@@ -190,7 +202,10 @@ mod tests {
     use crate::store::MemoryStore;
 
     fn store() -> MemoryStore {
-        MemoryStore::with([("aws/root", "AKIAROOT"), ("stripe/sk_live", "sk_live_static")])
+        MemoryStore::with([
+            ("aws/root", "AKIAROOT"),
+            ("stripe/sk_live", "sk_live_static"),
+        ])
     }
 
     #[test]
@@ -198,7 +213,13 @@ mod tests {
         let s = store();
         let c = FixedClock::new(1_000);
         let src = Source::new(&s, &c);
-        let got = src.acquire(&ExchangeRequest::new("stripe/sk_live", "api.stripe.com", 300)).unwrap();
+        let got = src
+            .acquire(&ExchangeRequest::new(
+                "stripe/sk_live",
+                "api.stripe.com",
+                300,
+            ))
+            .unwrap();
 
         assert!(!got.is_ephemeral());
         assert_eq!(got.value().expose(), "sk_live_static");
@@ -210,13 +231,21 @@ mod tests {
         let s = store();
         let c = FixedClock::new(1_000);
         let src = Source::new(&s, &c).with_exchanger(Box::new(MockExchanger::new("aws/", 900)));
-        let got = src.acquire(&ExchangeRequest::new("aws/root", "sts.amazonaws.com", 300)).unwrap();
+        let got = src
+            .acquire(&ExchangeRequest::new("aws/root", "sts.amazonaws.com", 300))
+            .unwrap();
 
         assert!(got.is_ephemeral());
         assert!(got.warning().is_none());
-        assert_ne!(got.value().expose(), "AKIAROOT", "the root must never be handed out");
+        assert_ne!(
+            got.value().expose(),
+            "AKIAROOT",
+            "the root must never be handed out"
+        );
 
-        let Acquired::Minted(m) = got else { panic!("expected minted") };
+        let Acquired::Minted(m) = got else {
+            panic!("expected minted")
+        };
         assert_eq!(m.expires_at, 1_300);
         assert!(m.valid_at(1_299));
         assert!(!m.valid_at(1_300), "expiry is exclusive");
@@ -229,9 +258,14 @@ mod tests {
         let s = store();
         let c = FixedClock::new(0);
         let src = Source::new(&s, &c).with_exchanger(Box::new(MockExchanger::new("aws/", 900)));
-        let got = src.acquire(&ExchangeRequest::new("aws/root", "sts", 86_400)).unwrap();
+        let got = src
+            .acquire(&ExchangeRequest::new("aws/root", "sts", 86_400))
+            .unwrap();
         let Acquired::Minted(m) = got else { panic!() };
-        assert_eq!(m.expires_at, 900, "a caller cannot ask for a longer life than allowed");
+        assert_eq!(
+            m.expires_at, 900,
+            "a caller cannot ask for a longer life than allowed"
+        );
     }
 
     #[test]
@@ -241,7 +275,9 @@ mod tests {
         let src = Source::new(&s, &c).with_exchanger(Box::new(MockExchanger::new("aws/", 900)));
         let req = ExchangeRequest::new("aws/root", "sts.amazonaws.com", 60)
             .with_scopes(vec!["s3:GetObject"]);
-        let Acquired::Minted(m) = src.acquire(&req).unwrap() else { panic!() };
+        let Acquired::Minted(m) = src.acquire(&req).unwrap() else {
+            panic!()
+        };
         assert_eq!(m.scopes, vec!["s3:GetObject"]);
         assert_eq!(m.audience, "sts.amazonaws.com");
     }
@@ -254,10 +290,16 @@ mod tests {
             .with_exchanger(Box::new(MockExchanger::new("aws/", 900)))
             .requiring_ephemeral();
 
-        assert!(src.acquire(&ExchangeRequest::new("aws/root", "sts", 60)).is_ok());
+        assert!(src
+            .acquire(&ExchangeRequest::new("aws/root", "sts", 60))
+            .is_ok());
         assert!(
             matches!(
-                src.acquire(&ExchangeRequest::new("stripe/sk_live", "api.stripe.com", 60)),
+                src.acquire(&ExchangeRequest::new(
+                    "stripe/sk_live",
+                    "api.stripe.com",
+                    60
+                )),
                 Err(Error::Denied(_))
             ),
             "a static key must be refused when only ephemeral is acceptable"
@@ -306,7 +348,9 @@ mod tests {
         let s = store();
         let c = FixedClock::new(0);
         let src = Source::new(&s, &c).with_exchanger(Box::new(MockExchanger::new("aws/", 900)));
-        let got = src.acquire(&ExchangeRequest::new("aws/root", "sts", 60)).unwrap();
+        let got = src
+            .acquire(&ExchangeRequest::new("aws/root", "sts", 60))
+            .unwrap();
         assert!(!format!("{:?}", got).contains("tmp_AKI"));
     }
 }

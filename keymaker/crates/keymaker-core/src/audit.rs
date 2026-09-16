@@ -11,16 +11,51 @@ use sha2::{Digest, Sha256};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum Event {
-    SessionOpened { session: String, peer_uid: u32, peer_pid: i32 },
-    SessionClosed { session: String },
-    HandleIssued { session: String, handle: String, capability: String },
-    HandleRedeemed { session: String, handle: String, capability: String },
-    HandleRejected { session: String, handle: String, reason: String },
-    PolicyDecision { capability: String, decision: String, rule: String },
-    RequestSent { capability: String, url: String, status: Option<u16> },
-    TaskRun { task: String, command: String, exit_code: Option<i32> },
-    LeakDetected { where_: String },
-    Approval { capability: String, granted: bool },
+    SessionOpened {
+        session: String,
+        peer_uid: u32,
+        peer_pid: i32,
+    },
+    SessionClosed {
+        session: String,
+    },
+    HandleIssued {
+        session: String,
+        handle: String,
+        capability: String,
+    },
+    HandleRedeemed {
+        session: String,
+        handle: String,
+        capability: String,
+    },
+    HandleRejected {
+        session: String,
+        handle: String,
+        reason: String,
+    },
+    PolicyDecision {
+        capability: String,
+        decision: String,
+        rule: String,
+    },
+    RequestSent {
+        capability: String,
+        url: String,
+        status: Option<u16>,
+    },
+    TaskRun {
+        task: String,
+        command: String,
+        exit_code: Option<i32>,
+    },
+    LeakDetected {
+        where_: String,
+    },
+    Approval {
+        capability: String,
+        granted: bool,
+    },
 }
 
 impl Event {
@@ -68,7 +103,10 @@ pub enum Tamper {
 
 impl<'a> Log<'a> {
     pub fn new(clock: &'a dyn Clock) -> Self {
-        Log { clock, entries: Vec::new() }
+        Log {
+            clock,
+            entries: Vec::new(),
+        }
     }
 
     pub fn append(&mut self, event: Event) -> &Entry {
@@ -80,7 +118,13 @@ impl<'a> Log<'a> {
             .map(|e| e.hash.clone())
             .unwrap_or_else(|| GENESIS.to_string());
         let hash = digest(seq, at, &prev, &event);
-        self.entries.push(Entry { seq, at, event, prev, hash });
+        self.entries.push(Entry {
+            seq,
+            at,
+            event,
+            prev,
+            hash,
+        });
         self.entries.last().expect("just pushed")
     }
 
@@ -97,7 +141,10 @@ impl<'a> Log<'a> {
     }
 
     pub fn head(&self) -> String {
-        self.entries.last().map(|e| e.hash.clone()).unwrap_or_else(|| GENESIS.to_string())
+        self.entries
+            .last()
+            .map(|e| e.hash.clone())
+            .unwrap_or_else(|| GENESIS.to_string())
     }
 
     /// `Ok(())` if the chain is intact, otherwise the first problem found.
@@ -119,8 +166,8 @@ impl<'a> Log<'a> {
             if line.trim().is_empty() {
                 continue;
             }
-            let e: Entry = serde_json::from_str(line)
-                .map_err(|e| format!("line {}: {}", i + 1, e))?;
+            let e: Entry =
+                serde_json::from_str(line).map_err(|e| format!("line {}: {}", i + 1, e))?;
             entries.push(e);
         }
         Ok(Log { clock, entries })

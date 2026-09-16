@@ -22,6 +22,7 @@ const USAGE: &str = "\
 keymaker — secrets your agent can use but never read
 
 USAGE
+  keymaker serve                   run the broker; the only holder of plaintext
   keymaker jail -- <command>        run a command confined; it cannot reach the store
   keymaker jail --print            print the sandbox profile that would be applied
   keymaker run <task> [-e <env>]   run a task named in .keymaker
@@ -35,6 +36,9 @@ USAGE
 
 There is deliberately no `get` and no `export`: the CLI cannot print a secret.
 Use the GUI to read a value yourself.
+
+The broker is used when one is running; otherwise commands run in-process and
+do the same checks. `keymaker serve` is what an agent talks to.
 
 OPTIONS
   -e, --env <name>    environment from .keymaker (default: \"default\")
@@ -73,12 +77,18 @@ fn parse(argv: Vec<String>) -> Args {
             }
             "-e" | "--env" => {
                 i += 1;
-                a.env = argv.get(i).cloned().unwrap_or_else(|| die("--env needs a value"));
+                a.env = argv
+                    .get(i)
+                    .cloned()
+                    .unwrap_or_else(|| die("--env needs a value"));
             }
             "-f" | "--file" => {
                 i += 1;
-                a.manifest =
-                    PathBuf::from(argv.get(i).cloned().unwrap_or_else(|| die("--file needs a path")));
+                a.manifest = PathBuf::from(
+                    argv.get(i)
+                        .cloned()
+                        .unwrap_or_else(|| die("--file needs a path")),
+                );
             }
             "-y" | "--yes" => a.yes = true,
             other => a.rest.push(other.to_string()),
@@ -97,11 +107,15 @@ fn load_manifest(path: &Path) -> Manifest {
 
 fn save_manifest(path: &Path, m: &Manifest) {
     let text = m.to_toml().unwrap_or_else(|e| die(e));
-    std::fs::write(path, text).unwrap_or_else(|e| die(format!("writing {}: {}", path.display(), e)));
+    std::fs::write(path, text)
+        .unwrap_or_else(|e| die(format!("writing {}: {}", path.display(), e)));
 }
 
 fn load_catalog() -> Catalog {
-    for p in [PathBuf::from(".keymaker.endpoints.toml"), config_dir().join("endpoints.toml")] {
+    for p in [
+        PathBuf::from(".keymaker.endpoints.toml"),
+        config_dir().join("endpoints.toml"),
+    ] {
         if let Ok(src) = std::fs::read_to_string(&p) {
             return Catalog::from_toml(&src).unwrap_or_else(|e| die(e));
         }
@@ -144,7 +158,10 @@ fn cmd_jail(args: &Args) {
             println!("{}", profile.to_seatbelt());
             if !cfg!(target_os = "macos") {
                 let plan = profile.to_landlock_plan();
-                println!("\n; linux plan\n{}", serde_json::to_string_pretty(&plan).unwrap());
+                println!(
+                    "\n; linux plan\n{}",
+                    serde_json::to_string_pretty(&plan).unwrap()
+                );
             }
         }
         Some(i) => {
@@ -189,7 +206,18 @@ fn cmd_run(args: &Args) {
             runner.run_command(&manifest, &command, &args.env)
         }
         None => {
-            let Some(task) = args.rest.first() else { die("run needs a task name") };
+            let Some(task) = args.rest.first() else {
+                die("run needs a task name")
+            };
+            // Prefer a running broker: there the value never enters this
+            // process at all. Without one, fall through and do the same work
+            // here, which is still safe for a human at a terminal.
+            if let Some(mut client) = broker_client() {
+                match client.grant_and_run(task, &args.env) {
+                    Ok(resp) => report(resp),
+                    Err(e) => die(e),
+                }
+            }
             runner.run_task(&manifest, task, &args.env)
         }
     };
@@ -227,10 +255,54 @@ fn approve(snippet: &str, assume_yes: bool) -> bool {
     matches!(answer.trim(), "y" | "Y" | "yes")
 }
 
+/// Print a broker response and exit with a code that matches it.
+fn report(resp: keymaker_core::protocol::Response) -> ! {
+    use keymaker_core::protocol::Response;
+    match resp {
+        Response::Ran {
+            exit_code,
+            stdout,
+            stderr,
+            redacted,
+        } => {
+            print!("{}", stdout);
+            eprint!("{}", stderr);
+            if redacted {
+                eprintln!("keymaker: a value was printed by this task and has been masked");
+            }
+            std::process::exit(exit_code.unwrap_or(1));
+        }
+        Response::Called {
+            status,
+            body,
+            redacted,
+        } => {
+            println!("{}", body);
+            if redacted {
+                eprintln!("keymaker: the response echoed the credential; it has been masked");
+            }
+            std::process::exit(if (200..300).contains(&status) { 0 } else { 1 });
+        }
+        Response::ApprovalRequired { capability, rule } => {
+            eprintln!("keymaker: `{}` needs approval ({}).", capability, rule);
+            eprintln!("Approve it in the GUI, or call again once approved.");
+            std::process::exit(3);
+        }
+        Response::Names { names } => {
+            for n in names {
+                println!("{}", n);
+            }
+            std::process::exit(0);
+        }
+        Response::Error { kind, message } => die(format!("{}: {}", kind, message)),
+        other => die(format!("unexpected reply: {:?}", other)),
+    }
+}
+
 fn cmd_call(args: &Args) {
-    let Some(name) = args.rest.first() else { die("call needs an endpoint name") };
-    let catalog = load_catalog();
-    let endpoint = catalog.get(name).unwrap_or_else(|e| die(e));
+    let Some(name) = args.rest.first() else {
+        die("call needs an endpoint name")
+    };
 
     let body_src = match args.rest.get(1) {
         Some(s) => s.clone(),
@@ -246,17 +318,30 @@ fn cmd_call(args: &Args) {
     };
     let body: BTreeMap<String, serde_json::Value> =
         serde_json::from_str(&body_src).unwrap_or_else(|e| die(format!("body is not JSON: {}", e)));
+    let draft = RequestDraft {
+        endpoint: name.clone(),
+        body,
+        ..Default::default()
+    };
 
-    let draft = RequestDraft { endpoint: name.clone(), body, ..Default::default() };
+    // With a broker, the credential never enters this process.
+    if let Some(mut client) = broker_client() {
+        match client.grant_and_call(name, draft) {
+            Ok(resp) => report(resp),
+            Err(e) => die(e),
+        }
+    }
 
-    // Structural checks and policy run before the credential is touched.
+    // Without one, run the same sequence here: check, decide, then inject.
+    let catalog = load_catalog();
+    let endpoint = catalog.get(name).unwrap_or_else(|e| die(e));
     let checked = endpoint.check(&draft).unwrap_or_else(|e| die(e));
     match endpoint.decide(&checked) {
         keymaker_core::policy::Decision::Allow => {}
         keymaker_core::policy::Decision::Deny(why) => die(format!("denied by policy: {}", why)),
         keymaker_core::policy::Decision::StepUp(why) => {
-            if !approve(&format!("policy requires approval: {}\n{}\n", why, checked.url()), args.yes)
-            {
+            let prompt = format!("policy requires approval: {}\n{}\n", why, checked.url());
+            if !approve(&prompt, args.yes) {
                 die("not approved");
             }
         }
@@ -266,14 +351,25 @@ fn cmd_call(args: &Args) {
     let secret = store.get(&endpoint.secret).unwrap_or_else(|e| die(e));
     let prepared = endpoint.prepare(checked, secret.expose());
 
-    // Sending is the one piece still to land; see docs/PLAN.md step 3.4.
-    eprintln!(
-        "keymaker: would send {} {} ({} headers)",
-        prepared.method,
-        prepared.url,
-        prepared.headers.len()
-    );
-    die("sending is not implemented yet (PLAN.md 3.4)");
+    let transport = keymaker_core::transport::HttpTransport::default();
+    match keymaker_core::broker::Transport::send(&transport, &prepared) {
+        Ok(resp) => {
+            // Filter the credential out of whatever came back.
+            let redactor = keymaker_core::redact::Redactor::new(&[secret.expose()]);
+            let leaked = redactor.detects(resp.body.as_bytes());
+            let body = redactor.redact(resp.body.as_bytes());
+            println!("{}", String::from_utf8_lossy(&body));
+            if leaked {
+                eprintln!("keymaker: the response echoed the credential; it has been masked");
+            }
+            std::process::exit(if (200..300).contains(&resp.status) {
+                0
+            } else {
+                1
+            });
+        }
+        Err(e) => die(e),
+    }
 }
 
 fn cmd_list(args: &Args) {
@@ -333,10 +429,15 @@ fn cmd_doctor(args: &Args) {
 }
 
 fn cmd_set(args: &Args) {
-    let Some(reference) = args.rest.first() else { die("set needs a reference, e.g. stripe/sk_live") };
+    let Some(reference) = args.rest.first() else {
+        die("set needs a reference, e.g. stripe/sk_live")
+    };
     let mut value = String::new();
     if std::io::stdin().is_terminal() {
-        eprint!("value for {} (input is not echoed by your terminal if piped): ", reference);
+        eprint!(
+            "value for {} (input is not echoed by your terminal if piped): ",
+            reference
+        );
         std::io::stderr().flush().ok();
     }
     std::io::stdin()
@@ -354,7 +455,9 @@ fn cmd_set(args: &Args) {
 }
 
 fn cmd_rm(args: &Args) {
-    let Some(reference) = args.rest.first() else { die("rm needs a reference") };
+    let Some(reference) = args.rest.first() else {
+        die("rm needs a reference")
+    };
     let mut store = open_store();
     store.delete(reference).unwrap_or_else(|e| die(e));
     println!("removed {}", reference);
@@ -377,8 +480,62 @@ fn cmd_audit(args: &Args) {
         println!("(no audit entries yet)");
     }
     for e in log.entries() {
-        println!("{:>5}  {}  {}", e.seq, e.at, serde_json::to_string(&e.event).unwrap_or_default());
+        println!(
+            "{:>5}  {}  {}",
+            e.seq,
+            e.at,
+            serde_json::to_string(&e.event).unwrap_or_default()
+        );
     }
+}
+
+fn cmd_serve(args: &Args) {
+    use keymaker_core::broker::Broker;
+    use keymaker_core::id::OsEntropy;
+    use keymaker_core::server::{bind, default_socket_path, serve};
+
+    let path = args
+        .rest
+        .first()
+        .map(PathBuf::from)
+        .unwrap_or_else(default_socket_path);
+
+    let clock = SystemClock;
+    let entropy = OsEntropy;
+    let store = open_store();
+    let spawner = ProcessSpawner;
+    let transport = keymaker_core::transport::HttpTransport::default();
+    let manifest = load_manifest(&args.manifest);
+    let catalog = load_catalog();
+
+    let mut broker = Broker::new(
+        &clock,
+        &entropy,
+        store.as_ref(),
+        &spawner,
+        &transport,
+        manifest,
+        catalog,
+        // Handles are short-lived by design: long enough for one tool-call,
+        // not long enough to bank.
+        60,
+    );
+
+    let bound = bind(&path).unwrap_or_else(|e| die(e));
+    eprintln!("keymaker: broker listening on {}", path.display());
+    eprintln!("keymaker: {:?}", broker);
+    if let Err(e) = serve(&mut broker, &bound) {
+        die(e);
+    }
+}
+
+/// Connect to a running broker, if there is one.
+fn broker_client() -> Option<keymaker_core::server::Client> {
+    let path = keymaker_core::server::default_socket_path();
+    if !path.exists() {
+        return None;
+    }
+    keymaker_core::server::Client::connect(&path).ok()
 }
 
 fn main() {
@@ -390,6 +547,7 @@ fn main() {
     let args = parse(argv[1..].to_vec());
 
     match command.as_str() {
+        "serve" => cmd_serve(&args),
         "jail" => cmd_jail(&args),
         "run" => cmd_run(&args),
         "call" => cmd_call(&args),

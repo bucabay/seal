@@ -44,7 +44,9 @@ pub struct SessionPolicy {
 
 impl Default for SessionPolicy {
     fn default() -> Self {
-        SessionPolicy { enforce_order: true }
+        SessionPolicy {
+            enforce_order: true,
+        }
     }
 }
 
@@ -105,7 +107,12 @@ impl<'a> Registry<'a> {
         let id = Id::generate(self.entropy);
         self.sessions.insert(
             id.clone(),
-            Session { epoch: 0, high_water: 0, next_seq: 1, policy },
+            Session {
+                epoch: 0,
+                high_water: 0,
+                next_seq: 1,
+                policy,
+            },
         );
         id
     }
@@ -113,7 +120,10 @@ impl<'a> Registry<'a> {
     /// Advance to the next tool-call. Handles issued for an earlier epoch stop
     /// being redeemable, so a handle cannot outlive the call it was minted for.
     pub fn advance_epoch(&mut self, session: &SessionId) -> Result<u64, HandleError> {
-        let s = self.sessions.get_mut(session).ok_or(HandleError::WrongSession)?;
+        let s = self
+            .sessions
+            .get_mut(session)
+            .ok_or(HandleError::WrongSession)?;
         s.epoch += 1;
         Ok(s.epoch)
     }
@@ -145,7 +155,10 @@ impl<'a> Registry<'a> {
         ttl: u64,
     ) -> Result<Grant, HandleError> {
         let now = self.clock.now();
-        let s = self.sessions.get_mut(session).ok_or(HandleError::WrongSession)?;
+        let s = self
+            .sessions
+            .get_mut(session)
+            .ok_or(HandleError::WrongSession)?;
         let seq = s.next_seq;
         s.next_seq += 1;
         let grant = Grant {
@@ -179,7 +192,10 @@ impl<'a> Registry<'a> {
             return Err(HandleError::Unknown);
         }
 
-        let sess = self.sessions.get(session).ok_or(HandleError::WrongSession)?;
+        let sess = self
+            .sessions
+            .get(session)
+            .ok_or(HandleError::WrongSession)?;
         let policy = sess.policy;
         let current_epoch = sess.epoch;
         let high_water = sess.high_water;
@@ -333,7 +349,9 @@ mod tests {
     fn ordering_is_enforced_when_asked_for() {
         let (clock, ent) = fixture();
         let mut r = Registry::new(&clock, &ent, 60);
-        let s = r.open_session(SessionPolicy { enforce_order: true });
+        let s = r.open_session(SessionPolicy {
+            enforce_order: true,
+        });
         let first = r.issue(&s, cap(), 1).unwrap();
         let second = r.issue(&s, cap(), 1).unwrap();
 
@@ -349,7 +367,9 @@ mod tests {
     fn ordering_can_be_relaxed() {
         let (clock, ent) = fixture();
         let mut r = Registry::new(&clock, &ent, 60);
-        let s = r.open_session(SessionPolicy { enforce_order: false });
+        let s = r.open_session(SessionPolicy {
+            enforce_order: false,
+        });
         let first = r.issue(&s, cap(), 1).unwrap();
         let second = r.issue(&s, cap(), 1).unwrap();
 
@@ -376,7 +396,9 @@ mod tests {
         // or its own second redemption would be rejected as stale.
         let (clock, ent) = fixture();
         let mut r = Registry::new(&clock, &ent, 60);
-        let s = r.open_session(SessionPolicy { enforce_order: true });
+        let s = r.open_session(SessionPolicy {
+            enforce_order: true,
+        });
         let g = r.issue(&s, cap(), 2).unwrap();
         assert!(r.redeem(&s, &g.id).is_ok());
         assert!(r.redeem(&s, &g.id).is_ok(), "retry must survive ordering");

@@ -3,7 +3,7 @@
 What is built, what is next, in the order it should happen. Tick a box only
 when it is covered by a passing test.
 
-Run the suite with `cargo test --workspace`. Currently **133 passing**.
+Run the suite with `cargo test --workspace`. Currently **184 passing**.
 
 ## Phase 1 — Jail the agent
 
@@ -43,7 +43,8 @@ raw `security find-generic-password` walks around everything otherwise.
 - [x] A spent handle is indistinguishable from one that never existed
 - [x] Ordering enforcement, opt-out for legitimate retries
 - [x] Sweep expired handles
-- [ ] Wire the registry into the daemon — currently exercised only by tests
+- [x] Wired into the broker: a handle names what it authorises, so a handle for
+      one task cannot run another, and one for a request cannot run a task
 
 ### 2c. Constrained HTTP requests
 
@@ -54,21 +55,29 @@ raw `security find-generic-password` walks around everything otherwise.
 - [x] Body schema: required, optional, types, unknown-field rejection, size bound
 - [x] Policy: allow / deny / step-up, evaluated before the secret is read
 - [x] `prepare()` takes the value as an argument so the module cannot reach the store
-- [ ] **Actually send the request** — everything up to the socket is done (`cmd_call` stops here)
-- [ ] Redact the response before returning it
+- [x] Send the request — https only, and redirects refused, because a redirect
+      would carry the credential to a host the definition never pinned
+- [x] Redact the response before returning it, and report when it echoed
 - [ ] Ship starter definitions: Anthropic, OpenAI, Stripe, GitHub, Cloudflare, Vercel
 
 ### 2d. The daemon
 
-None of this is built. The library is shaped for it: the registry, policy and
-catalog are all owned types with no global state.
-
-- [ ] `keymaker serve` on a unix socket
-- [ ] Peer credential auth (`SO_PEERCRED` / `LOCAL_PEERCRED`)
-- [ ] Hold a `pidfd` on Linux so PID reuse cannot race the credential check
-- [ ] Session lifecycle tied to the connection
-- [ ] Thin client that carries a request and no key material
-- [ ] MCP surface: `list`, `run`, `call`, `set`, `delete`, `request_approval` — and no read tool
+- [x] `keymaker serve` on a unix socket, 0700 directory and 0600 socket
+- [x] Peer credential auth (`SO_PEERCRED` on Linux, `getpeereid` +
+      `LOCAL_PEERPID` on macOS) — identity from the kernel, never self-reported
+- [x] PID reuse closed by comparing the peer's process *start time*, not just
+      its number. This works on both platforms; a Linux `pidfd` would be
+      tidier and is still worth doing, but the race is already shut
+- [x] Session lifecycle tied to the connection: closing the socket destroys
+      every handle it earned
+- [x] Thin client that carries a request and no key material
+- [x] Wire format with no operation that returns a value, asserted by a test
+      that fails if one is ever added
+- [x] Socket ownership via `flock`, not a `connect()` probe — a listener that
+      has just closed can still accept for a moment, so "is anyone there?" is
+      a race and the lock is not
+- [ ] MCP surface over the same dispatch: `list`, `run`, `call`, `set`,
+      `delete`, `request_approval` — and no read tool
 
 ## Phase 3 — Expiry
 
@@ -83,7 +92,11 @@ catalog are all owned types with no global state.
 
 - [x] Hash-chained log, tamper detection, JSONL round trip
 - [x] Test asserting no event variant can carry a value
-- [ ] Persist the log and append on every decision (nothing writes to it yet)
+- [x] The broker appends on every session, grant, redemption, policy decision,
+      task run and request — recording a handle *prefix*, never a redeemable one
+- [x] Step-up approval: a call that needs a human is refused until one says
+      yes, and the approval authorises exactly one call
+- [ ] Persist the log to disk (it currently lives for the broker's lifetime)
 - [ ] `keymaker audit --verify` against the real file
 - [ ] Approval UI beyond a terminal prompt
 

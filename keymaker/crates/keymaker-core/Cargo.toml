@@ -12,4 +12,14 @@ serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
 sha2.workspace = true
+ureq = { workspace = true, optional = true }
+
+[features]
+default = ["http"]
+# The real network transport. Off, the broker still builds and every
+# structural check still runs; only sending is unavailable.
+http = ["dep:ureq"]
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
 

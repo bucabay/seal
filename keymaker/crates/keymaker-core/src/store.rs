@@ -99,7 +99,9 @@ pub struct KeychainStore {
 #[cfg(target_os = "macos")]
 impl KeychainStore {
     pub fn new(service: impl Into<String>) -> Self {
-        KeychainStore { service: service.into() }
+        KeychainStore {
+            service: service.into(),
+        }
     }
 }
 
@@ -114,7 +116,14 @@ impl Default for KeychainStore {
 impl SecretStore for KeychainStore {
     fn get(&self, key: &str) -> Result<Secret> {
         let out = std::process::Command::new("security")
-            .args(["find-generic-password", "-a", key, "-s", &self.service, "-w"])
+            .args([
+                "find-generic-password",
+                "-a",
+                key,
+                "-s",
+                &self.service,
+                "-w",
+            ])
             .output()
             .map_err(|e| Error::Os(format!("running security: {}", e)))?;
         if !out.status.success() {
@@ -173,7 +182,10 @@ impl SecretStore for KeychainStore {
         if !out.status.success() {
             return Ok(Vec::new());
         }
-        Ok(parse_dump(&String::from_utf8_lossy(&out.stdout), &self.service))
+        Ok(parse_dump(
+            &String::from_utf8_lossy(&out.stdout),
+            &self.service,
+        ))
     }
 }
 
@@ -218,7 +230,11 @@ mod tests {
     fn a_secret_does_not_print_itself() {
         let s = Secret::new("sk_live_do_not_print_me");
         let shown = format!("{:?}", s);
-        assert!(!shown.contains("sk_live"), "Debug leaked the value: {}", shown);
+        assert!(
+            !shown.contains("sk_live"),
+            "Debug leaked the value: {}",
+            shown
+        );
         assert!(shown.contains("redacted"));
         assert_eq!(s.expose(), "sk_live_do_not_print_me");
     }
@@ -232,7 +248,10 @@ mod tests {
             #[allow(dead_code)]
             value: Secret,
         }
-        let h = Holder { name: "stripe".into(), value: Secret::new("sk_live_nested") };
+        let h = Holder {
+            name: "stripe".into(),
+            value: Secret::new("sk_live_nested"),
+        };
         assert!(!format!("{:?}", h).contains("sk_live_nested"));
     }
 
@@ -288,6 +307,9 @@ attributes:
     "svce"<blob>="keymaker"
     "acct"<blob>="github/token"
 "#;
-        assert_eq!(parse_dump(dump, "keymaker"), vec!["stripe/sk_live", "github/token"]);
+        assert_eq!(
+            parse_dump(dump, "keymaker"),
+            vec!["stripe/sk_live", "github/token"]
+        );
     }
 }

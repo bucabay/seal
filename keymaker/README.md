@@ -37,6 +37,9 @@ cargo install --path crates/keymaker-cli      # from this repo
 ## Use
 
 ```sh
+# Start the broker. It is the only process that holds a plaintext value.
+keymaker serve &
+
 # Confine an agent. Everything it spawns inherits this.
 keymaker jail -- claude
 
@@ -108,7 +111,7 @@ Limits are stated in full in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 ## Status
 
 Early. See [docs/PLAN.md](docs/PLAN.md) for exactly what is built and what is
-not. 133 tests, `cargo test --workspace`.
+not. 184 tests, `cargo test --workspace`.
 
 ## License
 

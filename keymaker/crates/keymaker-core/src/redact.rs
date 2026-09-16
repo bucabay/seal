@@ -29,12 +29,7 @@ fn base64_variants(raw: &[u8]) -> Vec<Vec<u8>> {
                 *chunk.get(2).unwrap_or(&0),
             ];
             let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
-            let idx = [
-                (n >> 18) & 63,
-                (n >> 12) & 63,
-                (n >> 6) & 63,
-                n & 63,
-            ];
+            let idx = [(n >> 18) & 63, (n >> 12) & 63, (n >> 6) & 63, n & 63];
             let keep = chunk.len() + 1;
             for (i, ix) in idx.iter().enumerate() {
                 if i < keep {
@@ -100,7 +95,7 @@ fn needles_for(value: &str) -> Vec<Vec<u8>> {
     needles.dedup();
     // Longest first, so that a value which is a prefix of its own encoding is
     // masked in the longer form rather than leaving a tail behind.
-    needles.sort_by(|a, b| b.len().cmp(&a.len()));
+    needles.sort_by_key(|n| std::cmp::Reverse(n.len()));
     needles
 }
 
@@ -121,7 +116,7 @@ impl Redactor {
         }
         needles.sort();
         needles.dedup();
-        needles.sort_by(|a, b| b.len().cmp(&a.len()));
+        needles.sort_by_key(|n| std::cmp::Reverse(n.len()));
         Redactor { needles }
     }
 
@@ -175,7 +170,10 @@ pub struct StreamRedactor {
 
 impl StreamRedactor {
     pub fn new(inner: Redactor) -> Self {
-        StreamRedactor { inner, carry: Vec::new() }
+        StreamRedactor {
+            inner,
+            carry: Vec::new(),
+        }
     }
 
     /// Feed a chunk; returns the bytes that are safe to release now.
@@ -331,6 +329,10 @@ mod tests {
         // `rev` produces a string the redactor cannot know about.
         let reversed: String = SECRET.chars().rev().collect();
         let out = r().redact(reversed.as_bytes());
-        assert_eq!(s(&out), reversed, "redaction cannot catch transformed values");
+        assert_eq!(
+            s(&out),
+            reversed,
+            "redaction cannot catch transformed values"
+        );
     }
 }

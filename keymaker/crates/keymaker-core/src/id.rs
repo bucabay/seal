@@ -70,7 +70,10 @@ impl Id {
     /// exactly 64 lowercase hex characters, so a caller cannot smuggle
     /// structure into an identifier.
     pub fn parse(s: &str) -> Option<Self> {
-        if s.len() == 64 && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
+        if s.len() == 64
+            && s.bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
             Some(Id(s.to_string()))
         } else {
             None
@@ -128,7 +131,10 @@ mod tests {
         assert!(Id::parse(&"A".repeat(64)).is_none(), "uppercase");
         assert!(Id::parse(&"a".repeat(63)).is_none(), "too short");
         assert!(Id::parse(&"a".repeat(65)).is_none(), "too long");
-        assert!(Id::parse(&format!("{}../", "a".repeat(61))).is_none(), "path traversal");
+        assert!(
+            Id::parse(&format!("{}../", "a".repeat(61))).is_none(),
+            "path traversal"
+        );
         assert!(Id::parse("").is_none());
     }
 
