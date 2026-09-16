@@ -55,12 +55,39 @@ keymaker run -- ./scripts/seed.sh
 # Send a request built from a pinned endpoint definition.
 keymaker call stripe.refund '{"amount": 500, "charge": "ch_1"}'
 
+# Send a request built from a pinned endpoint definition.
+keymaker call github.issue_create '{"title": "from an agent"}'
+
 # Names only — never values.
 keymaker list
+keymaker audit --verify           # the trail, and proof it has not been edited
 keymaker doctor -e production     # which references are missing here
 ```
 
 There is no `get` and no `export`. To read a value yourself, use the GUI.
+
+## Endpoint definitions
+
+`endpoints/` ships definitions for Anthropic, OpenAI, Stripe, GitHub and
+Cloudflare. A definition is a security control, not glue — it decides what a
+credential may be used for:
+
+```toml
+[[endpoint]]
+name = "stripe.refund"
+method = "POST"                       # pinned
+host = "api.stripe.com"               # pinned
+path = "/v1/refunds"                  # pinned
+secret = "stripe/sk_live"             # a name, never a value
+body_format = "form"
+schema = { charge = "string", amount = "uint32?" }
+inject = { kind = "header", name = "Authorization", format = "Bearer {secret}" }
+policy = { step_up = "amount > 100000" }   # a big refund stops for a human
+```
+
+The same Stripe key is read-only for `stripe.charge_get`, needs approval above a
+threshold for `stripe.refund`, and always needs a human for
+`stripe.payout_create`. That asymmetry is the whole point.
 
 ## The manifest
 
@@ -111,7 +138,7 @@ Limits are stated in full in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 ## Status
 
 Early. See [docs/PLAN.md](docs/PLAN.md) for exactly what is built and what is
-not. 184 tests, `cargo test --workspace`.
+not. 203 tests, `cargo test --workspace`.
 
 ## License
 

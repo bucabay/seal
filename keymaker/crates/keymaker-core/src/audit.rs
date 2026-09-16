@@ -91,6 +91,9 @@ fn digest(seq: u64, at: u64, prev: &str, event: &Event) -> String {
 pub struct Log<'a> {
     clock: &'a dyn Clock,
     entries: Vec<Entry>,
+    /// Where entries are appended as they are made. Without one the log lives
+    /// only as long as the process.
+    sink: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,7 +109,35 @@ impl<'a> Log<'a> {
         Log {
             clock,
             entries: Vec::new(),
+            sink: None,
         }
+    }
+
+    /// Load any existing log at `path` and append to it from here on.
+    ///
+    /// A log that only lives in memory answers nothing after a crash, which is
+    /// when the question is usually asked. Refuses to append to a file whose
+    /// chain is already broken, rather than extending it and burying the fact.
+    pub fn open(
+        clock: &'a dyn Clock,
+        path: &std::path::Path,
+    ) -> std::result::Result<Log<'a>, String> {
+        let existing = std::fs::read_to_string(path).unwrap_or_default();
+        let mut log = Log::from_jsonl(clock, &existing)?;
+        if let Err(t) = log.verify() {
+            return Err(format!("existing audit log is not intact: {:?}", t));
+        }
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)
+                .map_err(|e| format!("creating {}: {}", dir.display(), e))?;
+        }
+        log.sink = Some(path.to_path_buf());
+        Ok(log)
+    }
+
+    /// Where entries are being written, if anywhere.
+    pub fn path(&self) -> Option<&std::path::Path> {
+        self.sink.as_deref()
     }
 
     pub fn append(&mut self, event: Event) -> &Entry {
@@ -118,13 +149,27 @@ impl<'a> Log<'a> {
             .map(|e| e.hash.clone())
             .unwrap_or_else(|| GENESIS.to_string());
         let hash = digest(seq, at, &prev, &event);
-        self.entries.push(Entry {
+        let entry = Entry {
             seq,
             at,
             event,
             prev,
             hash,
-        });
+        };
+
+        // Written before it is acknowledged: an entry that is not on disk is
+        // not evidence. A failed write is reported rather than propagated, so
+        // a full disk cannot stop the broker from doing its job.
+        if let Some(path) = &self.sink {
+            if let Err(e) = append_line(path, &entry) {
+                eprintln!(
+                    "keymaker: could not write the audit log at {}: {}",
+                    path.display(),
+                    e
+                );
+            }
+        }
+        self.entries.push(entry);
         self.entries.last().expect("just pushed")
     }
 
@@ -170,8 +215,24 @@ impl<'a> Log<'a> {
                 serde_json::from_str(line).map_err(|e| format!("line {}: {}", i + 1, e))?;
             entries.push(e);
         }
-        Ok(Log { clock, entries })
+        Ok(Log {
+            clock,
+            entries,
+            sink: None,
+        })
     }
+}
+
+fn append_line(path: &std::path::Path, entry: &Entry) -> std::io::Result<()> {
+    use std::io::Write;
+    let line = serde_json::to_string(entry)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    writeln!(f, "{}", line)?;
+    f.flush()
 }
 
 fn verify_slice(entries: &[Entry]) -> Result<(), Tamper> {
@@ -277,6 +338,115 @@ mod tests {
         let reloaded = Log::from_jsonl(&c2, &text).unwrap();
         assert_eq!(reloaded.entries(), log.entries());
         assert!(reloaded.verify().is_ok());
+    }
+
+    /// A directory that cleans up after itself.
+    struct TempDir(std::path::PathBuf);
+    impl TempDir {
+        fn new(tag: &str) -> TempDir {
+            static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+            let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let d =
+                std::env::temp_dir().join(format!("km-audit-{}-{}-{}", std::process::id(), n, tag));
+            let _ = std::fs::remove_dir_all(&d);
+            std::fs::create_dir_all(&d).unwrap();
+            TempDir(d)
+        }
+        fn file(&self) -> std::path::PathBuf {
+            self.0.join("audit.jsonl")
+        }
+    }
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn entries_are_on_disk_as_they_are_made() {
+        let dir = TempDir::new("write");
+        let c = FixedClock::new(10);
+        {
+            let mut log = Log::open(&c, &dir.file()).expect("open");
+            log.append(ev("a"));
+            c.advance(1);
+            log.append(ev("b"));
+            // No explicit flush or close: an entry is evidence only once it
+            // has been written.
+            assert_eq!(
+                std::fs::read_to_string(dir.file()).unwrap().lines().count(),
+                2
+            );
+        }
+        assert_eq!(
+            std::fs::read_to_string(dir.file()).unwrap().lines().count(),
+            2
+        );
+    }
+
+    #[test]
+    fn a_log_continues_a_previous_run_and_still_verifies() {
+        let dir = TempDir::new("continue");
+        let c = FixedClock::new(10);
+        {
+            let mut log = Log::open(&c, &dir.file()).unwrap();
+            log.append(ev("first-run"));
+        }
+        c.advance(100);
+        let mut log = Log::open(&c, &dir.file()).expect("reopen");
+        assert_eq!(log.len(), 1, "the previous run should be loaded");
+        log.append(ev("second-run"));
+
+        assert_eq!(log.len(), 2);
+        assert!(log.verify().is_ok(), "the chain must span both runs");
+        assert_eq!(
+            std::fs::read_to_string(dir.file()).unwrap().lines().count(),
+            2
+        );
+    }
+
+    #[test]
+    fn a_tampered_log_on_disk_is_refused_rather_than_extended() {
+        let dir = TempDir::new("tampered");
+        let c = FixedClock::new(10);
+        {
+            let mut log = Log::open(&c, &dir.file()).unwrap();
+            log.append(ev("a"));
+            log.append(ev("b"));
+        }
+        // Someone edits the middle of the file.
+        let text = std::fs::read_to_string(dir.file()).unwrap();
+        let doctored = text.replace("\"handle\":\"a\"", "\"handle\":\"rewritten\"");
+        assert_ne!(
+            doctored, text,
+            "the fixture should actually change something"
+        );
+        std::fs::write(dir.file(), doctored).unwrap();
+
+        let err = Log::open(&c, &dir.file()).unwrap_err();
+        assert!(
+            err.contains("not intact"),
+            "appending to a broken chain would bury the break: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn an_absent_log_file_is_a_fresh_start_not_an_error() {
+        let dir = TempDir::new("absent");
+        let c = FixedClock::new(10);
+        let log = Log::open(&c, &dir.file()).expect("a missing log is simply empty");
+        assert!(log.is_empty());
+        assert_eq!(log.path(), Some(dir.file().as_path()));
+    }
+
+    #[test]
+    fn a_log_without_a_sink_writes_nothing() {
+        let c = FixedClock::new(10);
+        let mut log = Log::new(&c);
+        log.append(ev("a"));
+        assert_eq!(log.path(), None);
+        assert_eq!(log.len(), 1);
     }
 
     #[test]

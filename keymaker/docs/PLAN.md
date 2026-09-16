@@ -3,7 +3,7 @@
 What is built, what is next, in the order it should happen. Tick a box only
 when it is covered by a passing test.
 
-Run the suite with `cargo test --workspace`. Currently **184 passing**.
+Run the suite with `cargo test --workspace`. Currently **203 passing**.
 
 ## Phase 1 — Jail the agent
 
@@ -58,7 +58,20 @@ raw `security find-generic-password` walks around everything otherwise.
 - [x] Send the request — https only, and redirects refused, because a redirect
       would carry the credential to a host the definition never pinned
 - [x] Redact the response before returning it, and report when it echoed
-- [ ] Ship starter definitions: Anthropic, OpenAI, Stripe, GitHub, Cloudflare, Vercel
+- [x] Both body encodings: JSON and form. Supporting only one would leave half
+      the useful APIs undefinable — Stripe takes form bodies, most modern APIs
+      take JSON
+- [x] Fixed headers a definition always sets (an API version, an `Accept`), which
+      a caller can neither supply nor override
+- [x] A `json` field type for genuinely open shapes such as a `messages` array.
+      Everything else about the request stays pinned; only that field's shape
+      goes unchecked
+- [x] Starter definitions in `endpoints/`: Anthropic, OpenAI, Stripe, GitHub,
+      Cloudflare — 11 endpoints, every one validated by a test that checks it
+      pins a host, never carries a credential, and never lets a caller supply
+      the header the credential goes in
+- [ ] More services. This is where contributions land, and each one is a
+      security control rather than glue
 
 ### 2d. The daemon
 
@@ -96,7 +109,11 @@ raw `security find-generic-password` walks around everything otherwise.
       task run and request — recording a handle *prefix*, never a redeemable one
 - [x] Step-up approval: a call that needs a human is refused until one says
       yes, and the approval authorises exactly one call
-- [ ] Persist the log to disk (it currently lives for the broker's lifetime)
+- [x] Persist to disk, appended before an entry is acknowledged — an entry that
+      is not written is not evidence
+- [x] Refuse to start against a log whose chain is already broken, rather than
+      appending and burying the break
+- [x] `keymaker audit` and `keymaker audit --verify` against the real file
 - [ ] `keymaker audit --verify` against the real file
 - [ ] Approval UI beyond a terminal prompt
 

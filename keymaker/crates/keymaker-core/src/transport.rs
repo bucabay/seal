@@ -131,6 +131,7 @@ mod tests {
                 "Bearer sk_live_X".to_string(),
             )]),
             body: Some("{}".into()),
+            content_type: "application/json",
         }
     }
 

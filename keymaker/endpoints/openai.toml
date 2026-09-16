@@ -1,0 +1,21 @@
+# OpenAI — https://platform.openai.com/docs/api-reference/chat
+
+[[endpoint]]
+name = "openai.chat"
+method = "POST"
+host = "api.openai.com"
+path = "/v1/chat/completions"
+secret = "openai/api_key"
+allow_headers = ["OpenAI-Organization", "OpenAI-Project"]
+max_body = 1048576
+inject = { kind = "header", name = "Authorization", format = "Bearer {secret}" }
+schema = { model = "string", messages = "json", max_tokens = "uint32?", temperature = "number?", tools = "json?", stream = "bool?" }
+
+[[endpoint]]
+name = "openai.embeddings"
+method = "POST"
+host = "api.openai.com"
+path = "/v1/embeddings"
+secret = "openai/api_key"
+inject = { kind = "header", name = "Authorization", format = "Bearer {secret}" }
+schema = { model = "string", input = "json" }

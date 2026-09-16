@@ -1,0 +1,21 @@
+# Cloudflare — https://developers.cloudflare.com/api/
+
+[[endpoint]]
+name = "cloudflare.purge_cache"
+method = "POST"
+host = "api.cloudflare.com"
+path = "/client/v4/zones/{zone}/purge_cache"
+secret = "cloudflare/api_token"
+inject = { kind = "header", name = "Authorization", format = "Bearer {secret}" }
+schema = { files = "json?", tags = "json?", purge_everything = "bool?" }
+# Purging everything is a blunt instrument on a production zone.
+policy = { step_up = "purge_everything == true" }
+
+[[endpoint]]
+name = "cloudflare.dns_record_create"
+method = "POST"
+host = "api.cloudflare.com"
+path = "/client/v4/zones/{zone}/dns_records"
+secret = "cloudflare/api_token"
+inject = { kind = "header", name = "Authorization", format = "Bearer {secret}" }
+schema = { type = "string", name = "string", content = "string", ttl = "uint32?", proxied = "bool?" }

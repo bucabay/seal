@@ -45,6 +45,14 @@ pub enum FieldType {
     Uint32,
     Number,
     Bool,
+    /// Any JSON value, including arrays and objects.
+    ///
+    /// An escape hatch for fields whose shape is genuinely open — a chat
+    /// `messages` array, for instance. The request is still pinned to one
+    /// method, host and path, and the header allowlist and size bound still
+    /// apply; only the shape of this field goes unchecked. Prefer a scalar
+    /// type wherever the API actually has one.
+    Json,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +74,7 @@ impl FieldSpec {
             "uint32" => FieldType::Uint32,
             "number" => FieldType::Number,
             "bool" => FieldType::Bool,
+            "json" => FieldType::Json,
             other => return Err(Error::Parse(format!("unknown field type `{}`", other))),
         };
         Ok(FieldSpec { ty, optional })
@@ -77,12 +86,60 @@ impl FieldSpec {
             FieldType::Bool => v.is_boolean(),
             FieldType::Number => v.is_number(),
             FieldType::Uint32 => v.as_u64().map(|n| n <= u32::MAX as u64).unwrap_or(false),
+            // Any shape, but not absent-in-disguise.
+            FieldType::Json => !v.is_null(),
         }
     }
 }
 
 fn default_max_body() -> usize {
     64 * 1024
+}
+
+/// How a validated body is written on the wire.
+///
+/// Both styles are common enough that supporting only one would leave half of
+/// the useful APIs undefinable: Stripe and many older services take
+/// form-encoded bodies, while most modern ones take JSON.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BodyFormat {
+    #[default]
+    Json,
+    Form,
+}
+
+impl BodyFormat {
+    pub fn content_type(&self) -> &'static str {
+        match self {
+            BodyFormat::Json => "application/json",
+            BodyFormat::Form => "application/x-www-form-urlencoded",
+        }
+    }
+
+    fn encode(&self, body: &BTreeMap<String, serde_json::Value>) -> Result<String> {
+        match self {
+            BodyFormat::Json => serde_json::to_string(body)
+                .map_err(|e| Error::Parse(format!("body is not encodable: {}", e))),
+            BodyFormat::Form => {
+                let mut parts = Vec::new();
+                for (k, v) in body {
+                    // Only scalars reach here: the schema has already rejected
+                    // arrays and objects, which form encoding cannot express.
+                    let rendered = match v {
+                        serde_json::Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    };
+                    parts.push(format!(
+                        "{}={}",
+                        percent_encode(k),
+                        percent_encode(&rendered)
+                    ));
+                }
+                Ok(parts.join("&"))
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -96,6 +153,11 @@ pub struct Endpoint {
     /// Where the value lives in the store. Never sent to the agent.
     pub secret: String,
     pub inject: Injection,
+    /// Headers this definition always sets, such as an API version. A caller
+    /// can neither supply nor override one.
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    /// Headers a caller *may* supply.
     #[serde(default)]
     pub allow_headers: Vec<String>,
     #[serde(default = "default_max_body")]
@@ -103,6 +165,8 @@ pub struct Endpoint {
     /// Field name -> type string. An empty schema forbids a body entirely.
     #[serde(default)]
     pub schema: BTreeMap<String, String>,
+    #[serde(default)]
+    pub body_format: BodyFormat,
     #[serde(default)]
     pub policy: Policy,
 }
@@ -126,6 +190,8 @@ pub struct PreparedRequest {
     pub url: String,
     pub headers: BTreeMap<String, String>,
     pub body: Option<String>,
+    /// Content type matching how `body` was encoded.
+    pub content_type: &'static str,
 }
 
 /// A request that passed every structural check but has not been given the
@@ -137,6 +203,7 @@ pub struct CheckedRequest {
     url: String,
     headers: BTreeMap<String, String>,
     body: Option<String>,
+    content_type: &'static str,
     facts: BTreeMap<String, Value>,
 }
 
@@ -211,9 +278,22 @@ impl Endpoint {
             .inject
             .reserved_header()
             .map(|h| h.to_ascii_lowercase());
-        let mut headers = BTreeMap::new();
+        let fixed: std::collections::BTreeSet<String> = self
+            .headers
+            .keys()
+            .map(|h| h.to_ascii_lowercase())
+            .collect();
+        // Start from the headers the definition always sets, so a caller can
+        // add to them but never replace one.
+        let mut headers = self.headers.clone();
         for (name, value) in &draft.headers {
             let lower = name.to_ascii_lowercase();
+            if fixed.contains(&lower) {
+                return Err(Error::Constraint(format!(
+                    "header `{}` is fixed by the definition and cannot be supplied",
+                    name
+                )));
+            }
             if Some(&lower) == reserved.as_ref() {
                 return Err(Error::Constraint(format!(
                     "header `{}` carries the credential and cannot be supplied",
@@ -270,8 +350,7 @@ impl Endpoint {
                     }
                 }
             }
-            let encoded = serde_json::to_string(&draft.body)
-                .map_err(|e| Error::Parse(format!("body is not encodable: {}", e)))?;
+            let encoded = self.body_format.encode(&draft.body)?;
             if encoded.len() > self.max_body {
                 return Err(Error::Constraint(format!(
                     "body is {} bytes, limit is {}",
@@ -288,6 +367,7 @@ impl Endpoint {
             url: format!("https://{}{}", self.host, path),
             headers,
             body,
+            content_type: self.body_format.content_type(),
             facts,
         })
     }
@@ -319,6 +399,7 @@ impl Endpoint {
             url,
             headers,
             body: checked.body,
+            content_type: checked.content_type,
         }
     }
 
@@ -702,6 +783,153 @@ inject = { kind = "header", name = "Authorization", format = "Bearer nothing" }
         let cat = catalog();
         assert_eq!(cat.names(), vec!["stripe.refund", "stripe.charge_get"]);
         assert!(cat.get("nope").is_err());
+    }
+
+    #[test]
+    fn fixed_headers_are_always_set_and_cannot_be_overridden() {
+        let src = r#"
+[[endpoint]]
+name = "anthropic.messages"
+method = "POST"
+host = "api.anthropic.com"
+path = "/v1/messages"
+secret = "anthropic/api_key"
+headers = { "anthropic-version" = "2023-06-01" }
+schema = { model = "string", messages = "json" }
+inject = { kind = "header", name = "x-api-key", format = "{secret}" }
+"#;
+        let cat = Catalog::from_toml(src).unwrap();
+        let ep = cat.get("anthropic.messages").unwrap();
+        let mut d = RequestDraft {
+            endpoint: "anthropic.messages".into(),
+            body: [
+                ("model".to_string(), json!("claude-opus-5")),
+                (
+                    "messages".to_string(),
+                    json!([{"role":"user","content":"hi"}]),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        };
+
+        let req = ep.build(&d, SECRET).unwrap();
+        assert_eq!(req.headers.get("anthropic-version").unwrap(), "2023-06-01");
+        assert_eq!(req.headers.get("x-api-key").unwrap(), SECRET);
+
+        // A caller may not replace one, in any casing.
+        d.headers
+            .insert("Anthropic-Version".into(), "1999-01-01".into());
+        assert!(matches!(ep.check(&d), Err(Error::Constraint(_))));
+    }
+
+    #[test]
+    fn a_json_field_accepts_a_shape_a_scalar_type_could_not() {
+        let src = r#"
+[[endpoint]]
+name = "x.chat"
+method = "POST"
+host = "api.x.test"
+path = "/chat"
+secret = "x/key"
+schema = { messages = "json" }
+inject = { kind = "header", name = "Authorization", format = "Bearer {secret}" }
+"#;
+        let cat = Catalog::from_toml(src).unwrap();
+        let ep = cat.get("x.chat").unwrap();
+        let d = RequestDraft {
+            endpoint: "x.chat".into(),
+            body: [("messages".to_string(), json!([{"role": "user"}]))]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        };
+        assert!(ep.check(&d).is_ok());
+
+        // Null is still refused: a present-but-empty field is almost always a
+        // caller mistake rather than an intent.
+        let d2 = RequestDraft {
+            endpoint: "x.chat".into(),
+            body: [("messages".to_string(), json!(null))]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        };
+        assert!(matches!(ep.check(&d2), Err(Error::Constraint(_))));
+    }
+
+    #[test]
+    fn a_form_encoded_endpoint_writes_a_form_body() {
+        // Stripe and many older APIs take form bodies, not JSON.
+        let src = r#"
+[[endpoint]]
+name = "stripe.refund_form"
+method = "POST"
+host = "api.stripe.com"
+path = "/v1/refunds"
+secret = "stripe/sk_live"
+body_format = "form"
+schema = { amount = "uint32", charge = "string" }
+inject = { kind = "header", name = "Authorization", format = "Bearer {secret}" }
+"#;
+        let cat = Catalog::from_toml(src).unwrap();
+        let ep = cat.get("stripe.refund_form").unwrap();
+        let d = RequestDraft {
+            endpoint: "stripe.refund_form".into(),
+            body: [
+                ("amount".into(), json!(500)),
+                ("charge".into(), json!("ch_1")),
+            ]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        };
+        let req = ep.build(&d, SECRET).unwrap();
+        assert_eq!(req.body.unwrap(), "amount=500&charge=ch_1");
+        assert_eq!(req.content_type, "application/x-www-form-urlencoded");
+    }
+
+    #[test]
+    fn form_encoding_escapes_values_that_would_otherwise_inject_fields() {
+        let src = r#"
+[[endpoint]]
+name = "legacy.post"
+method = "POST"
+host = "api.legacy.test"
+path = "/x"
+secret = "legacy/key"
+body_format = "form"
+schema = { note = "string" }
+inject = { kind = "header", name = "Authorization", format = "Bearer {secret}" }
+"#;
+        let cat = Catalog::from_toml(src).unwrap();
+        let ep = cat.get("legacy.post").unwrap();
+        let d = RequestDraft {
+            endpoint: "legacy.post".into(),
+            body: [("note".to_string(), json!("a&admin=true b=c"))]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        };
+        let req = ep.build(&d, SECRET).unwrap();
+        let body = req.body.unwrap();
+        assert!(
+            !body.contains("&admin=true"),
+            "a value must not become a field: {}",
+            body
+        );
+        assert_eq!(body, "note=a%26admin%3Dtrue%20b%3Dc");
+    }
+
+    #[test]
+    fn json_remains_the_default_encoding() {
+        let cat = catalog();
+        let ep = cat.get("stripe.refund").unwrap();
+        assert_eq!(ep.body_format, BodyFormat::Json);
+        let req = ep.build(&refund_draft(), SECRET).unwrap();
+        assert_eq!(req.content_type, "application/json");
+        assert!(req.body.unwrap().starts_with('{'));
     }
 
     #[test]

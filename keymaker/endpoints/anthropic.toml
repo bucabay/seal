@@ -1,0 +1,28 @@
+# Anthropic — https://docs.anthropic.com/en/api/messages
+#
+# The credential goes in `x-api-key`, and the API version is fixed here rather
+# than left to the caller so a request cannot silently target a different one.
+
+[[endpoint]]
+name = "anthropic.messages"
+method = "POST"
+host = "api.anthropic.com"
+path = "/v1/messages"
+secret = "anthropic/api_key"
+headers = { "anthropic-version" = "2023-06-01" }
+allow_headers = ["anthropic-beta"]
+max_body = 1048576
+inject = { kind = "header", name = "x-api-key", format = "{secret}" }
+
+# `messages` and `tools` are open by shape; everything else is pinned.
+schema = { model = "string", max_tokens = "uint32", messages = "json", system = "json?", temperature = "number?", tools = "json?", stream = "bool?" }
+
+[[endpoint]]
+name = "anthropic.count_tokens"
+method = "POST"
+host = "api.anthropic.com"
+path = "/v1/messages/count_tokens"
+secret = "anthropic/api_key"
+headers = { "anthropic-version" = "2023-06-01" }
+inject = { kind = "header", name = "x-api-key", format = "{secret}" }
+schema = { model = "string", messages = "json", system = "json?", tools = "json?" }

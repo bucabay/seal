@@ -96,6 +96,14 @@ impl<'a> Broker<'a> {
         }
     }
 
+    /// Write the audit trail to a file as well as memory. Without this the
+    /// log answers nothing after the broker exits, which is when it is usually
+    /// wanted.
+    pub fn with_audit(mut self, log: Log<'a>) -> Self {
+        self.audit = log;
+        self
+    }
+
     pub fn audit_log(&self) -> &Log<'a> {
         &self.audit
     }

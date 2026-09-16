@@ -1,0 +1,32 @@
+# GitHub — https://docs.github.com/en/rest
+#
+# The API version is fixed here; a caller cannot move to another one.
+
+[[endpoint]]
+name = "github.issue_create"
+method = "POST"
+host = "api.github.com"
+path = "/repos/{owner}/{repo}/issues"
+secret = "github/token"
+headers = { "Accept" = "application/vnd.github+json", "X-GitHub-Api-Version" = "2022-11-28", "User-Agent" = "keymaker" }
+inject = { kind = "header", name = "Authorization", format = "Bearer {secret}" }
+schema = { title = "string", body = "string?", labels = "json?", assignees = "json?" }
+
+[[endpoint]]
+name = "github.issue_comment"
+method = "POST"
+host = "api.github.com"
+path = "/repos/{owner}/{repo}/issues/{number}/comments"
+secret = "github/token"
+headers = { "Accept" = "application/vnd.github+json", "X-GitHub-Api-Version" = "2022-11-28", "User-Agent" = "keymaker" }
+inject = { kind = "header", name = "Authorization", format = "Bearer {secret}" }
+schema = { body = "string" }
+
+[[endpoint]]
+name = "github.repo_get"
+method = "GET"
+host = "api.github.com"
+path = "/repos/{owner}/{repo}"
+secret = "github/token"
+headers = { "Accept" = "application/vnd.github+json", "X-GitHub-Api-Version" = "2022-11-28", "User-Agent" = "keymaker" }
+inject = { kind = "header", name = "Authorization", format = "Bearer {secret}" }

@@ -465,19 +465,26 @@ fn cmd_rm(args: &Args) {
 
 fn cmd_audit(args: &Args) {
     let path = config_dir().join("audit.jsonl");
-    let src = std::fs::read_to_string(&path).unwrap_or_default();
     let clock = SystemClock;
-    let log = keymaker_core::audit::Log::from_jsonl(&clock, &src).unwrap_or_else(|e| die(e));
+    let log = match keymaker_core::audit::Log::open(&clock, &path) {
+        Ok(l) => l,
+        Err(e) => die(format!("{} ({})", e, path.display())),
+    };
 
     if args.rest.iter().any(|a| a == "--verify") {
         match log.verify() {
-            Ok(()) => println!("audit chain intact: {} entries", log.len()),
-            Err(t) => die(format!("audit chain broken: {:?}", t)),
+            Ok(()) => println!(
+                "audit chain intact: {} entries in {}",
+                log.len(),
+                path.display()
+            ),
+            Err(t) => die(format!("audit chain broken at {:?}", t)),
         }
         return;
     }
     if log.is_empty() {
-        println!("(no audit entries yet)");
+        println!("(no audit entries yet; {} )", path.display());
+        return;
     }
     for e in log.entries() {
         println!(
@@ -508,6 +515,12 @@ fn cmd_serve(args: &Args) {
     let manifest = load_manifest(&args.manifest);
     let catalog = load_catalog();
 
+    let audit_path = config_dir().join("audit.jsonl");
+    let audit = keymaker_core::audit::Log::open(&clock, &audit_path)
+        // A broken chain is worth refusing to start for: appending to it would
+        // bury the break, and the log exists precisely to be trusted.
+        .unwrap_or_else(|e| die(format!("{} ({})", e, audit_path.display())));
+
     let mut broker = Broker::new(
         &clock,
         &entropy,
@@ -519,10 +532,12 @@ fn cmd_serve(args: &Args) {
         // Handles are short-lived by design: long enough for one tool-call,
         // not long enough to bank.
         60,
-    );
+    )
+    .with_audit(audit);
 
     let bound = bind(&path).unwrap_or_else(|e| die(e));
     eprintln!("keymaker: broker listening on {}", path.display());
+    eprintln!("keymaker: audit trail at {}", audit_path.display());
     eprintln!("keymaker: {:?}", broker);
     if let Err(e) = serve(&mut broker, &bound) {
         die(e);

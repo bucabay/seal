@@ -1,0 +1,41 @@
+# Stripe — https://docs.stripe.com/api
+#
+# Stripe takes form-encoded bodies, not JSON.
+#
+# Note the split: reads are unrestricted, refunds need a human above a
+# threshold, and payouts are denied outright. That asymmetry is the point of a
+# definition — the same key, with very different authority per operation.
+
+[[endpoint]]
+name = "stripe.charge_get"
+method = "GET"
+host = "api.stripe.com"
+path = "/v1/charges/{id}"
+secret = "stripe/sk_live"
+inject = { kind = "header", name = "Authorization", format = "Bearer {secret}" }
+
+[[endpoint]]
+name = "stripe.refund"
+method = "POST"
+host = "api.stripe.com"
+path = "/v1/refunds"
+secret = "stripe/sk_live"
+body_format = "form"
+allow_headers = ["Idempotency-Key"]
+max_body = 8192
+inject = { kind = "header", name = "Authorization", format = "Bearer {secret}" }
+schema = { charge = "string", amount = "uint32?", reason = "string?" }
+# Anything over £1,000 stops for a person.
+policy = { step_up = "amount > 100000" }
+
+[[endpoint]]
+name = "stripe.payout_create"
+method = "POST"
+host = "api.stripe.com"
+path = "/v1/payouts"
+secret = "stripe/sk_live"
+body_format = "form"
+inject = { kind = "header", name = "Authorization", format = "Bearer {secret}" }
+schema = { amount = "uint32", currency = "string" }
+# Moving money out is not something an agent does unattended.
+policy = { always_step_up = true }
