@@ -23,3 +23,12 @@ http = ["dep:ureq"]
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
 
+# macOS talks to the keychain through the `security` CLI (see store.rs); the
+# other platforms go through `keyring`, which maps to Secret Service and
+# Credential Manager.
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+keyring.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+keyring.workspace = true
+

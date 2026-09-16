@@ -472,6 +472,48 @@ pub fn serve_stdio<D: Dispatcher>(dispatcher: D) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Talks to a broker over the socket. The MCP process holds no key material;
+/// it carries requests.
+impl Dispatcher for crate::server::Client {
+    fn dispatch(&mut self, req: Request) -> Response {
+        self.send(req).unwrap_or_else(|e| Response::from(&e))
+    }
+}
+
+/// Runs a broker in this process, for when there is no daemon to talk to.
+///
+/// The security properties are weaker here — the broker and the MCP surface
+/// share an address space — so prefer a real daemon wherever there is one.
+pub struct LocalDispatcher<'a> {
+    broker: crate::broker::Broker<'a>,
+    conn: crate::broker::Connection,
+}
+
+impl<'a> LocalDispatcher<'a> {
+    pub fn new(mut broker: crate::broker::Broker<'a>, peer: crate::peer::PeerIdentity) -> Self {
+        let mut conn = crate::broker::Connection::new(peer);
+        // Complete the handshake up front: an in-process caller has nobody to
+        // handshake with.
+        broker.dispatch(
+            &mut conn,
+            Request::Hello {
+                version: crate::protocol::PROTOCOL_VERSION,
+            },
+        );
+        LocalDispatcher { broker, conn }
+    }
+
+    pub fn audit_log(&self) -> &crate::audit::Log<'a> {
+        self.broker.audit_log()
+    }
+}
+
+impl Dispatcher for LocalDispatcher<'_> {
+    fn dispatch(&mut self, req: Request) -> Response {
+        self.broker.dispatch(&mut self.conn, req)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -839,47 +881,5 @@ mod tests {
                 text
             );
         }
-    }
-}
-
-/// Talks to a broker over the socket. The MCP process holds no key material;
-/// it carries requests.
-impl Dispatcher for crate::server::Client {
-    fn dispatch(&mut self, req: Request) -> Response {
-        self.send(req).unwrap_or_else(|e| Response::from(&e))
-    }
-}
-
-/// Runs a broker in this process, for when there is no daemon to talk to.
-///
-/// The security properties are weaker here — the broker and the MCP surface
-/// share an address space — so prefer a real daemon wherever there is one.
-pub struct LocalDispatcher<'a> {
-    broker: crate::broker::Broker<'a>,
-    conn: crate::broker::Connection,
-}
-
-impl<'a> LocalDispatcher<'a> {
-    pub fn new(mut broker: crate::broker::Broker<'a>, peer: crate::peer::PeerIdentity) -> Self {
-        let mut conn = crate::broker::Connection::new(peer);
-        // Complete the handshake up front: an in-process caller has nobody to
-        // handshake with.
-        broker.dispatch(
-            &mut conn,
-            Request::Hello {
-                version: crate::protocol::PROTOCOL_VERSION,
-            },
-        );
-        LocalDispatcher { broker, conn }
-    }
-
-    pub fn audit_log(&self) -> &crate::audit::Log<'a> {
-        self.broker.audit_log()
-    }
-}
-
-impl Dispatcher for LocalDispatcher<'_> {
-    fn dispatch(&mut self, req: Request) -> Response {
-        self.broker.dispatch(&mut self.conn, req)
     }
 }

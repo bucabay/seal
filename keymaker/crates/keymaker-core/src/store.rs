@@ -222,6 +222,84 @@ fn parse_dump(dump: &str, service: &str) -> Vec<String> {
     names
 }
 
+/// Linux Secret Service and Windows Credential Manager, through `keyring`.
+///
+/// macOS is handled separately above, because `keyring`'s macOS backend creates
+/// items with an ACL that re-prompts across binaries.
+#[cfg(any(all(unix, not(target_os = "macos")), windows))]
+#[derive(Debug, Clone)]
+pub struct KeyringStore {
+    service: String,
+}
+
+#[cfg(any(all(unix, not(target_os = "macos")), windows))]
+impl KeyringStore {
+    pub fn new(service: impl Into<String>) -> Self {
+        KeyringStore {
+            service: service.into(),
+        }
+    }
+
+    fn entry(&self, key: &str) -> Result<keyring::Entry> {
+        keyring::Entry::new(&self.service, key).map_err(|e| Error::Store(format!("keyring: {}", e)))
+    }
+}
+
+#[cfg(any(all(unix, not(target_os = "macos")), windows))]
+impl Default for KeyringStore {
+    fn default() -> Self {
+        KeyringStore::new("keymaker")
+    }
+}
+
+#[cfg(any(all(unix, not(target_os = "macos")), windows))]
+impl SecretStore for KeyringStore {
+    fn get(&self, key: &str) -> Result<Secret> {
+        self.entry(key)?
+            .get_password()
+            .map(Secret::new)
+            .map_err(|_| Error::NotFound(format!("secret `{}`", key)))
+    }
+
+    fn set(&mut self, key: &str, value: Secret) -> Result<()> {
+        self.entry(key)?
+            .set_password(value.expose())
+            .map_err(|e| Error::Store(format!("keyring: {}", e)))
+    }
+
+    fn delete(&mut self, key: &str) -> Result<()> {
+        self.entry(key)?
+            .delete_credential()
+            .map_err(|_| Error::NotFound(format!("secret `{}`", key)))
+    }
+
+    /// Neither backend can be enumerated through the keyed API used here, so
+    /// listing falls back to the names recorded in the manifest.
+    ///
+    /// Returning an empty list rather than an error keeps `doctor` and the
+    /// broker's listings working: they report what a manifest asks for and
+    /// check each reference individually, which does not need enumeration.
+    fn names(&self) -> Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+}
+
+/// The right store for this platform.
+pub fn platform_store() -> Box<dyn SecretStore> {
+    #[cfg(target_os = "macos")]
+    {
+        Box::new(KeychainStore::default())
+    }
+    #[cfg(any(all(unix, not(target_os = "macos")), windows))]
+    {
+        Box::new(KeyringStore::default())
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        Box::new(MemoryStore::new())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -288,6 +366,20 @@ mod tests {
         let names = s.names().unwrap();
         assert_eq!(names, vec!["a/one", "b/two"]);
         assert!(names.iter().all(|n| !n.contains("secret")));
+    }
+
+    #[test]
+    fn the_platform_store_round_trips_a_value() {
+        // Exercises whichever backend this platform actually uses, so the
+        // cfg-gated code is not merely compiled but run.
+        let mut store = platform_store();
+        let key = format!("keymaker-selftest/{}", std::process::id());
+        let value = "round-trip-value";
+
+        store.set(&key, Secret::new(value)).expect("set");
+        assert_eq!(store.get(&key).expect("get").expose(), value);
+        store.delete(&key).expect("delete");
+        assert!(store.get(&key).is_err(), "a deleted secret must be gone");
     }
 
     #[cfg(target_os = "macos")]

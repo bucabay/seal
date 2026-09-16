@@ -211,6 +211,40 @@ impl Profile {
         }
     }
 
+    /// Apply this profile to the current process on Linux, irreversibly.
+    ///
+    /// Everything this process execs afterwards inherits the restriction, so
+    /// the intended use is: call this, then exec the agent.
+    ///
+    /// Landlock can only grant, so the denied paths are turned into the
+    /// equivalent grant list first — see [`crate::landlock`].
+    pub fn enter_here(&self) -> Result<(), String> {
+        if !cfg!(target_os = "linux") {
+            return Err("entering a profile in-process is Linux-only; use wrap_command".into());
+        }
+        let denied: Vec<std::path::PathBuf> = self
+            .deny_read
+            .iter()
+            .map(std::path::PathBuf::from)
+            .collect();
+        let granted = crate::landlock::allow_list(&denied, &crate::landlock::RealDirs);
+        crate::landlock::apply(&granted)
+    }
+
+    /// Whether this platform can enforce the profile at all, and how.
+    pub fn enforcement() -> Enforcement {
+        if cfg!(target_os = "macos") {
+            Enforcement::Seatbelt
+        } else if cfg!(target_os = "linux") {
+            match crate::landlock::abi_version() {
+                Some(v) => Enforcement::Landlock { abi: v },
+                None => Enforcement::None,
+            }
+        } else {
+            Enforcement::None
+        }
+    }
+
     /// argv that runs `command` under this profile, or `None` where the
     /// platform has no supported mechanism.
     pub fn wrap_command(&self, command: &[String]) -> Option<Vec<String>> {
@@ -225,6 +259,31 @@ impl Profile {
             Some(argv)
         } else {
             None
+        }
+    }
+}
+
+/// How the agent jail is enforced here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Enforcement {
+    /// macOS: a seatbelt profile applied through `sandbox-exec`.
+    Seatbelt,
+    /// Linux: a Landlock ruleset applied to the process before exec.
+    Landlock { abi: i32 },
+    /// Nothing available. The jail is not enforced and must not be claimed.
+    None,
+}
+
+impl Enforcement {
+    pub fn is_enforced(&self) -> bool {
+        !matches!(self, Enforcement::None)
+    }
+
+    pub fn describe(&self) -> String {
+        match self {
+            Enforcement::Seatbelt => "macOS seatbelt".into(),
+            Enforcement::Landlock { abi } => format!("Linux Landlock (ABI {})", abi),
+            Enforcement::None => "none — the jail is NOT enforced on this platform".into(),
         }
     }
 }
@@ -442,6 +501,33 @@ mod tests {
             assert_eq!(&argv[4..], &["claude".to_string(), "--help".to_string()]);
         } else {
             assert!(wrapped.is_none());
+        }
+    }
+
+    #[test]
+    fn enforcement_is_reported_honestly_for_this_platform() {
+        let e = Profile::enforcement();
+        if cfg!(target_os = "macos") {
+            assert_eq!(e, Enforcement::Seatbelt);
+            assert!(e.is_enforced());
+        } else if cfg!(target_os = "linux") {
+            // Either a Landlock kernel or an honest "none"; both are valid.
+            assert!(matches!(
+                e,
+                Enforcement::Landlock { .. } | Enforcement::None
+            ));
+        } else {
+            assert_eq!(e, Enforcement::None);
+            assert!(!e.is_enforced());
+            assert!(e.describe().contains("NOT enforced"));
+        }
+    }
+
+    #[test]
+    fn entering_in_process_is_refused_off_linux() {
+        if !cfg!(target_os = "linux") {
+            let err = Profile::shield("/work").enter_here().unwrap_err();
+            assert!(err.contains("Linux-only"));
         }
     }
 

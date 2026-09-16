@@ -133,17 +133,10 @@ fn config_dir() -> PathBuf {
     }
 }
 
-/// The real store on macOS; elsewhere an in-memory stand-in until the
-/// platform backend lands, so the CLI is still exercisable.
+/// The store for this platform: Keychain on macOS, Secret Service on Linux,
+/// Credential Manager on Windows.
 fn open_store() -> Box<dyn SecretStore> {
-    #[cfg(target_os = "macos")]
-    {
-        Box::new(keymaker_core::store::KeychainStore::default())
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        Box::new(keymaker_core::store::MemoryStore::new())
-    }
+    keymaker_core::store::platform_store()
 }
 
 fn cmd_jail(args: &Args) {
@@ -155,14 +148,26 @@ fn cmd_jail(args: &Args) {
     let after_sep = args.rest.iter().position(|a| a == "--");
     match after_sep {
         None => {
-            // `--print` or nothing: show what would be enforced.
+            // `--print` or nothing: show what would be enforced, and how.
+            eprintln!(
+                "keymaker: enforcement here is {}",
+                keymaker_core::jail::Profile::enforcement().describe()
+            );
             println!("{}", profile.to_seatbelt());
             if !cfg!(target_os = "macos") {
-                let plan = profile.to_landlock_plan();
-                println!(
-                    "\n; linux plan\n{}",
-                    serde_json::to_string_pretty(&plan).unwrap()
+                let denied: Vec<std::path::PathBuf> = profile
+                    .deny_read
+                    .iter()
+                    .map(std::path::PathBuf::from)
+                    .collect();
+                let granted = keymaker_core::landlock::allow_list(
+                    &denied,
+                    &keymaker_core::landlock::RealDirs,
                 );
+                println!("\n; landlock would grant, and nothing else:");
+                for g in granted {
+                    println!(";   {}", g.display());
+                }
             }
         }
         Some(i) => {
@@ -170,14 +175,36 @@ fn cmd_jail(args: &Args) {
             if command.is_empty() {
                 die("jail needs a command after `--`");
             }
-            let Some(argv) = profile.wrap_command(&command) else {
-                die("no sandbox mechanism on this platform yet; see docs/PLAN.md");
-            };
-            let status = std::process::Command::new(&argv[0])
-                .args(&argv[1..])
-                .status()
-                .unwrap_or_else(|e| die(format!("launching sandbox: {}", e)));
-            std::process::exit(status.code().unwrap_or(1));
+            match keymaker_core::jail::Profile::enforcement() {
+                // macOS wraps the command; the profile is applied by
+                // `sandbox-exec`.
+                keymaker_core::jail::Enforcement::Seatbelt => {
+                    let Some(argv) = profile.wrap_command(&command) else {
+                        die("no sandbox mechanism available");
+                    };
+                    let status = std::process::Command::new(&argv[0])
+                        .args(&argv[1..])
+                        .status()
+                        .unwrap_or_else(|e| die(format!("launching sandbox: {}", e)));
+                    std::process::exit(status.code().unwrap_or(1));
+                }
+                // Linux restricts this process, then execs. The restriction is
+                // inherited, so everything the agent spawns is covered.
+                keymaker_core::jail::Enforcement::Landlock { .. } => {
+                    if let Err(e) = profile.enter_here() {
+                        die(format!("applying the jail: {}", e));
+                    }
+                    let status = std::process::Command::new(&command[0])
+                        .args(&command[1..])
+                        .status()
+                        .unwrap_or_else(|e| die(format!("launching {}: {}", command[0], e)));
+                    std::process::exit(status.code().unwrap_or(1));
+                }
+                keymaker_core::jail::Enforcement::None => die(
+                    "this platform cannot enforce the jail; running the command would \
+                     imply a protection that is not there",
+                ),
+            }
         }
     }
 }

@@ -17,6 +17,7 @@ pub mod error;
 pub mod handle;
 pub mod id;
 pub mod jail;
+pub mod landlock;
 pub mod manifest;
 pub mod mcp;
 pub mod peer;
