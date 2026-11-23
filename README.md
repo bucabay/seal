@@ -32,6 +32,8 @@ with reveal, copy and delete on each row](docs/images/seal-gui.png)
 
 ## Install
 
+Full steps, including Gatekeeper handling: [docs/INSTALL.md](docs/INSTALL.md).
+
 ### Homebrew (macOS / Linux) — CLI
 
 ```sh
@@ -41,14 +43,17 @@ brew install bucabay/tap/seal
 ### Homebrew (macOS) — GUI app
 
 ```sh
+brew trust bucabay/tap                 # once, if Homebrew asks
 brew install --cask bucabay/tap/seal
 ```
 
-The cask installs the prebuilt `.dmg` and, like the release bundle below, it is
-unsigned and not notarized. macOS blocks the first launch; skip quarantining it
-with `brew install --cask --no-quarantine bucabay/tap/seal`, or allow it once
-in System Settings → Privacy & Security. Homebrew may ask you to trust the tap
-once first (`brew trust bucabay/tap`).
+The cask installs the prebuilt `.dmg`. Neither the cask nor the app is signed or
+notarized, so macOS quarantines it and blocks the first launch. Clear the flag
+once with `xattr -dr com.apple.quarantine /Applications/Seal.app`, or allow it
+under System Settings → Privacy & Security.
+
+The formula and cask share the name: `brew install seal` is the CLI,
+`brew install --cask seal` is the app.
 
 ### GitHub Releases — GUI app
 
@@ -139,6 +144,7 @@ in its caveats.
 
 ## Documentation
 
+- [Install](docs/INSTALL.md) — Homebrew CLI + GUI cask, releases, source, signing
 - [Agent model](docs/AGENT-MODEL.md) — the agent-only design, what `keymaker`
   builds of it, and what is still a goal
 - [Plan D](docs/PLAN-D.md) — the three ways to use a secret without seeing it

@@ -18,12 +18,10 @@ cask "seal" do
   app "Seal.app"
 
   caveats <<~EOS
-    Seal is distributed unsigned and not notarized, so macOS blocks the first
-    launch. Remove the quarantine flag once:
+    Seal is distributed unsigned and not notarized, so macOS quarantines it and
+    blocks the first launch. Clear the flag once:
       xattr -dr com.apple.quarantine /Applications/Seal.app
-    or install without it:
-      brew install --cask --no-quarantine seal
-    On macOS 15 and later, allow the app under System Settings → Privacy &
-    Security after the first blocked launch.
+    Or try to open it, then allow Seal under System Settings → Privacy &
+    Security → Open Anyway. After that it launches normally.
   EOS
 end
