@@ -3,6 +3,9 @@
 Cross-platform secrets manager. A small CLI + GUI backed by your operating
 system's native keychain — no secrets file to protect, no sync to trust.
 
+![The Seal GUI: vault and environment selectors above a list of masked secrets,
+with reveal, copy and delete on each row](docs/images/seal-gui.png)
+
 | OS | Backend |
 |---|---|
 | macOS | Keychain |
@@ -68,6 +71,9 @@ SEAL_ENV=production seal get db_url       # change environment
 seal get db_url -e production             # or via flag
 ```
 
+![Seal from the terminal: saving two secrets, reading one back, and listing
+everything in a vault](docs/images/seal-cli.gif)
+
 No args launches the GUI.
 
 ## Environments
@@ -121,6 +127,7 @@ pnpm tauri dev                                  # GUI
 cargo run --manifest-path src-tauri/Cargo.toml -- set KEY VALUE   # CLI
 cargo build --manifest-path src-tauri/Cargo.toml --no-default-features   # CLI-only (no Tauri)
 pnpm build                                      # type-check + build frontend
+vhs scripts/demo.tape                           # re-record the CLI demo GIF
 ```
 
 Releases are built by [`.github/workflows/release.yml`](.github/workflows/release.yml)
