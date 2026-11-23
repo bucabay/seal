@@ -38,13 +38,26 @@ with reveal, copy and delete on each row](docs/images/seal-gui.png)
 brew install bucabay/tap/seal
 ```
 
+### Homebrew (macOS) — GUI app
+
+```sh
+brew install --cask bucabay/tap/seal
+```
+
+The cask installs the prebuilt `.dmg` and, like the release bundle below, it is
+unsigned and not notarized. macOS blocks the first launch; skip quarantining it
+with `brew install --cask --no-quarantine bucabay/tap/seal`, or allow it once
+in System Settings → Privacy & Security. Homebrew may ask you to trust the tap
+once first (`brew trust bucabay/tap`).
+
 ### GitHub Releases — GUI app
 
 Download the `.dmg` (macOS), `.msi`/`.exe` (Windows), or `.deb`/`.AppImage`
 (Linux) from the [latest release](https://github.com/bucabay/seal/releases).
 
-> macOS builds are unsigned — if Gatekeeper blocks the app, right-click → Open,
-> or run `xattr -dr com.apple.quarantine /Applications/Seal.app`.
+> macOS builds are unsigned — if Gatekeeper blocks the app, allow it under
+> System Settings → Privacy & Security, or run
+> `xattr -dr com.apple.quarantine /Applications/Seal.app`.
 
 ### From source
 

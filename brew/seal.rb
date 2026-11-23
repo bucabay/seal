@@ -15,7 +15,8 @@ class Seal < Formula
 
   def install
     # CLI-only build: no Tauri/GUI/frontend, no C compilation.
-    # The GUI is distributed separately (see --cask, once published).
+    # The GUI is a separate cask (brew/Casks/seal.rb), because it ships as a
+    # prebuilt unsigned .dmg rather than being compiled by Homebrew.
     system "cargo", "build",
            "--manifest-path", "src-tauri/Cargo.toml",
            "--no-default-features",
