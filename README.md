@@ -126,7 +126,8 @@ in its caveats.
 
 ## Documentation
 
-- [Agent model](docs/AGENT-MODEL.md) — why there is no read verb; ssh-agent for secrets
+- [Agent model](docs/AGENT-MODEL.md) — the agent-only design, what `keymaker`
+  builds of it, and what is still a goal
 - [Plan D](docs/PLAN-D.md) — the three ways to use a secret without seeing it
 - [keymaker/](keymaker/) — the agent-only implementation of Plan D (separate CLI + library)
 - [Architecture](docs/ARCHITECTURE.md) — components, storage model, data flow

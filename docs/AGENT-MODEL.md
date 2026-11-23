@@ -4,6 +4,40 @@ Seal's primary user is an AI coding agent, not a human at a prompt. This
 document records the decision that follows from taking that seriously, and
 states its limits narrowly enough to be defensible.
 
+**Status: ⚠️ partially built, and not by `seal`.** This document describes the
+agent-only target. The `seal` CLI still ships `seal get`, so the model does not
+apply to it yet. [`keymaker/`](../keymaker/) is the agent-only build in this
+repository and implements most of what follows; the markers below say which
+part is which. [keymaker/docs/PLAN.md](../keymaker/docs/PLAN.md) is the
+authoritative build list.
+
+Legend: ✅ implemented and covered by tests · ⚠️ partial or narrower than
+described here · ❌ not implemented.
+
+Reviewed 2026-11-23.
+
+## At a glance
+
+| Piece | `seal` | `keymaker/` |
+|---|---|---|
+| No read verb | ❌ `get` still ships | ✅ no `get`/`export`/`reveal`; a test fails if one is added |
+| Named tasks from a committed manifest | ❌ | ✅ `.keymaker`, `keymaker run <task>` |
+| Ad-hoc command approved once, then named | ❌ | ✅ `keymaker run -- <command>` |
+| Per-use human approval (`approve = true`) | ❌ | ⚠️ step-up works for calls; the manifest flag is not enforced on runs |
+| Redacted stdout/stderr | ❌ | ✅ raw, base64, percent, JSON escaping |
+| Post-run file scan | ❌ | ⚠️ detects and reports, does not scrub |
+| Sandbox | ❌ | ⚠️ `keymaker jail`; no Windows, no network rules |
+| Ephemeral credentials | ❌ | ⚠️ library + tests; not wired into runs |
+| Pinned API proxy (the narrow "oracle") | ❌ | ⚠️ `keymaker call`, per endpoint only |
+| MCP surface | ❌ | ✅ five tools; no `set`/`delete` |
+| Audit chain + approvals | ❌ | ✅ hash-chained log, GUI queue |
+| GUI reveal/copy | ✅ | ✅ |
+| Keychain ACL fixed | ⚠️ new items `-T ""`; signed builds can protect items | ❌ deliberately not used — jail instead |
+| `.env` import | ❌ | ❌ |
+
+`keymaker` is not in the GitHub release or the brew formula yet; build it with
+`cargo install --path keymaker/crates/keymaker-cli`.
+
 ## The decision
 
 **Seal's CLI has no read verb.** There is no way to ask it for a secret value.
@@ -11,6 +45,10 @@ states its limits narrowly enough to be defensible.
 - `seal get` — **removed.**
 - `seal export` — **will not be built.**
 - The only way to use a secret is to have Seal run something with it.
+
+**Status:** ❌ in `seal` — `seal get` ships today and is documented in the
+README. ✅ in `keymaker` — there is no `get`, `export` or `reveal` verb, and a
+test fails the build if a value-returning one is added.
 
 The model is `ssh-agent`. You do not ask `ssh-agent` for your private key; you
 ask it to sign. Nobody considers it crippled for lacking an export verb — the
@@ -32,6 +70,9 @@ is in a transcript it cannot be recalled.
 Deleting the verb ends the negotiation. A capability that does not exist cannot
 be misused, cannot be forgotten under context pressure, and cannot be talked
 out of a model by a crafted comment in a source file.
+
+**Status:** the rule is still the only control in `seal`. In `keymaker` the
+capability is removed, which is the point of the split.
 
 ### Where the ssh-agent analogy holds, and where it breaks
 
@@ -64,6 +105,10 @@ seal run deploy                 # named task from .seal
 seal run deploy -e production   # same task, production refs
 seal run -- ./scripts/deploy.sh # ad-hoc: approved once, then named (below)
 ```
+
+**Status:** ✅ in `keymaker` as `keymaker run`, reading `.keymaker` rather than
+`.seal` (the examples below are illustrative). ❌ in `seal` — there is no
+`seal run`, and `get` is still the consuming verb.
 
 Refs resolve through the committed manifest, which holds names and never values:
 
@@ -104,8 +149,17 @@ silently substitute `printenv` for a task a human approved, the manifest gets
 authored by the agent and merely reviewed by the human (a one-line diff), and
 every command that ever touched a secret is on the record.
 
+**Status:** ✅ `keymaker run -- <command>` proposes the snippet, prompts, and
+writes it to `.keymaker`; `--yes` is the non-interactive path, and a non-TTY
+without it is refused.
+
 `approve = true` on a ref escalates further: production values require a human
 tap per use, the equivalent of `ssh-add -c`.
+
+**Status:** ⚠️ partial. Per-call step-up in endpoint policy is enforced and each
+approval authorises exactly one call. `approve = true` on a manifest binding is
+parsed (`Binding::needs_approval`) but `Runner` does not check it yet, so a task
+run does not stop for a human because of that flag.
 
 ## Output: redaction, not suppression
 
@@ -140,6 +194,10 @@ transform a value arbitrarily before printing it. Stated narrowly: *Seal never
 returns a value to the model, and filters known values out of what it does
 return.*
 
+**Status:** ✅ in `keymaker`. It strips the raw value, standard and URL-safe
+base64 (padded and unpadded), percent-encoding, and JSON escaping, and reports
+when it masked something. `seal` does not redact.
+
 ## How far can redaction go?
 
 Redaction of the returned stream is cheap and worth doing. The question is
@@ -158,6 +216,8 @@ directory, Seal can scan every file the run touched, scrub any injected value it
 finds, fail the run loudly, and tell the human. That catches the realistic
 case — an agent that writes a `.env` or a debug log *to be helpful* — before it
 is ever read or committed. It is the pre-commit leak scanner, moved earlier.
+
+*(Built so far: detection and reporting only — no scrub, no failed run.)*
 
 **What Seal cannot touch.** Once `seal run` returns, Seal is out of the path.
 The agent's own file reads, its next shell command, its network access: Seal has
@@ -188,11 +248,23 @@ agent. What actually closes the gap is making the value useless once taken:
 | **Ephemeral credentials** (short-lived token minted per run) | yes | **yes — the stolen value expires** | moderate, needs provider support |
 | Proxy the provider API (true oracle) | yes | yes — plaintext never leaves Seal | very high, per-provider |
 
+**Status:** ⚠️ partial in `keymaker`. Returned streams are redacted ✅; the
+post-run scan detects and reports files but does not scrub them or fail the
+run; the jail confines the agent rather than an individual run and has no
+network rules; the credential-exchange machinery is built and tested but not
+wired into runs yet; a true provider proxy is not built — `keymaker call` only
+proxies pinned endpoints.
+
 Ephemeral credentials are the honest answer wherever the provider offers them
 (AWS STS, GitHub App tokens, Stripe restricted keys, OIDC federation): a value
 exfiltrated from a run is worthless minutes later, so the exfiltration channels
 above stop mattering without having to close a single one. That is where the
 effort belongs once redaction and scanning are in place.
+
+**Status:** ⚠️ built as a library and covered by tests (`Source`, `Exchanger`,
+AWS STS, GitHub App tokens, RFC 8693), but not yet wired into `keymaker run`
+— a task still receives the stored static value. Stripe has no minting API, so
+restricted keys remain a dashboard action by design.
 
 ## The human path
 
@@ -204,6 +276,10 @@ which already has reveal and copy.
 - **CLI = agent surface.** No read verb exists.
 
 > The CLI cannot print a secret. The app can — to you.
+
+**Status:** ✅ GUI reveal/copy in both `seal` and `keymaker`. ⚠️ In `seal` the
+CLI can also print a value (`seal get`), so the CLI/app split only holds for
+`keymaker`.
 
 Two residuals, stated rather than hidden: an agent holding macOS Accessibility
 or AppleScript permissions could drive the GUI (a much higher bar, not zero),
@@ -221,6 +297,16 @@ warning" (see [DECISIONS.md](DECISIONS.md)). Verified again 2026-09-14 on a
 development machine: a value written with `seal set` was read back by a bare
 `security find-generic-password` call from an unrelated process, with no prompt
 and no denial.
+
+**Status:** ⚠️ narrowed, not closed. `seal` now creates new standard items with
+an empty trusted-application list (`-T ""`), and a signed, provisioned build
+can store protected items with a `USER_PRESENCE` access control (`seal
+protect`). No signed designated-requirement build ships yet, so the original
+`-A` hole is only closed for items written by this version.
+
+`keymaker` takes the other route and deliberately does not use a restrictive
+keychain ACL (PLAN.md, Phase 5): it jails the agent instead, which needs no
+Apple Developer ID and works the same way on Linux.
 
 While that holds, removing `get` is an **accident** control, not an **attack**
 control:
@@ -252,6 +338,11 @@ agent could not obtain it another way."
 - The MCP surface is `list` / `run` / `set` / `delete` / `request_approval`.
   There is no `read`. A tool that returns a value is the one thing that cannot
   be added later without giving up the claim.
+
+**Status:** ❌ for `seal`, ✅ for `keymaker` (where the split has happened).
+`keymaker mcp` serves five tools — `list`, `run`, `call`, `next_turn`,
+`request_approval` — not the `set`/`delete` pair listed here; storing and
+removing are CLI/GUI only. `.env` import is not implemented in either.
 
 ## Open questions
 
