@@ -29,8 +29,9 @@ class Seal < Formula
 
   def caveats
     <<~EOS
-      To enable the Seal agent skill (Claude Code / opencode):
-        ln -s "#{opt_share}/seal/skills/seal" "$HOME/.claude/skills/seal"
+      To install the Seal agent skill for Claude Code, Codex, opencode and other
+      Agent Skills tools:
+        seal skill install
     EOS
   end
 
@@ -38,6 +39,7 @@ class Seal < Formula
     system "#{bin}/seal", "--help"
     # Guards against the formula and the installed binary drifting apart.
     assert_match version.to_s, shell_output("#{bin}/seal --version")
+    assert_match "seal skill install", shell_output("#{bin}/seal skill")
     assert_path_exists share/"seal/skills/seal/SKILL.md"
   end
 end

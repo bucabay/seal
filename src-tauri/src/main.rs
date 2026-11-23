@@ -3,6 +3,123 @@ mod keychain;
 
 use index::DEFAULT_VAULT;
 
+/// The agent skill is compiled into the binary so `seal skill install` works
+/// from a standalone install, on every platform, without a source checkout.
+const SKILL_MD: &str = include_str!("../../skills/seal/SKILL.md");
+
+struct SkillTarget {
+    agent: &'static str,
+    /// Directory the skill is written to (`<root>/skills/seal`).
+    dir: std::path::PathBuf,
+    detected: bool,
+    /// Install even when the agent is not present (the shared hub).
+    always: bool,
+}
+
+/// Where each agent looks for a skill.
+///
+/// `~/.agents/skills` is the cross-agent hub and is always written. The
+/// tool-specific roots are only used when that tool already exists, so an
+/// install never leaves directories behind for agents the user does not have.
+/// Paths have the same shape on macOS, Linux and Windows, except opencode,
+/// which follows XDG on Unix and lives under `%APPDATA%` on Windows.
+fn skill_targets() -> Vec<SkillTarget> {
+    let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+    let opencode_root = {
+        #[cfg(target_os = "windows")]
+        {
+            dirs::config_dir()
+                .unwrap_or_else(|| home.join("AppData/Roaming"))
+                .join("opencode")
+        }
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            dirs::config_dir()
+                .unwrap_or_else(|| home.join(".config"))
+                .join("opencode")
+        }
+        #[cfg(target_os = "macos")]
+        {
+            home.join(".config/opencode")
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            home.join(".config/opencode")
+        }
+    };
+
+    [
+        ("shared (Agent Skills)", home.join(".agents"), true),
+        ("Claude Code", home.join(".claude"), false),
+        ("Codex", home.join(".codex"), false),
+        ("opencode", opencode_root, false),
+    ]
+    .into_iter()
+    .map(|(agent, root, always)| SkillTarget {
+        agent,
+        detected: root.exists(),
+        dir: root.join("skills/seal"),
+        always,
+    })
+    .collect()
+}
+
+fn cmd_skill_help() {
+    println!("Install the Seal agent skill for the tools on this machine:");
+    println!();
+    println!("  seal skill install");
+    println!("  seal skill install --dir <root>   # any other skills root");
+    println!();
+    println!("Targets:");
+    for t in skill_targets() {
+        let state = if t.always {
+            "always"
+        } else if t.detected {
+            "detected"
+        } else {
+            "missing"
+        };
+        println!("  {:<24} {:<9} {}", t.agent, state, t.dir.display());
+    }
+}
+
+fn cmd_skill_install(custom: Option<&str>) {
+    let targets = match custom {
+        Some(root) => vec![SkillTarget {
+            agent: "custom",
+            dir: std::path::PathBuf::from(root).join("seal"),
+            detected: true,
+            always: true,
+        }],
+        None => skill_targets(),
+    };
+
+    let mut installed = 0;
+    let mut skipped = Vec::new();
+    for t in targets {
+        if !t.always && !t.detected {
+            skipped.push(t.agent);
+            continue;
+        }
+        let file = t.dir.join("SKILL.md");
+        let result = std::fs::create_dir_all(&t.dir).and_then(|_| std::fs::write(&file, SKILL_MD));
+        if let Err(e) = result {
+            eprintln!("Error: {}: {}", file.display(), e);
+            std::process::exit(1);
+        }
+        println!("  {:<24} {}", t.agent, file.display());
+        installed += 1;
+    }
+
+    if installed == 0 {
+        eprintln!("Error: no skill directory could be installed");
+        std::process::exit(1);
+    }
+    for agent in skipped {
+        println!("  {:<24} skipped (not installed)", agent);
+    }
+}
+
 fn parse_key(raw: &str, default_vault: &str) -> (String, String) {
     if let Some((vault, key)) = raw.split_once('/') {
         (vault.to_string(), key.to_string())
@@ -377,6 +494,11 @@ fn print_usage() {
     eprintln!("  an environment falls back through what it extends, so an environment");
     eprintln!("  only needs to store what it overrides.");
     eprintln!();
+    eprintln!("Agent skill:");
+    eprintln!("  seal skill                         Show where the skill installs");
+    eprintln!("  seal skill install [--dir <root>]  Install it for Claude Code, Codex,");
+    eprintln!("                                     opencode and ~/.agents/skills");
+    eprintln!();
     eprintln!("Options:");
     eprintln!("  --vault, -v <name>                 Vault (overrides SEAL_VAULT env)");
     eprintln!("  --env,   -e <name>                 Environment (overrides SEAL_ENV env)");
@@ -528,6 +650,32 @@ fn main() {
             Some(other) => {
                 eprintln!("Unknown env command: {}", other);
                 eprintln!("Usage: seal env [list | add <name> [--extends <p>] | rm <name>]");
+                std::process::exit(1);
+            }
+        },
+        "skill" => match filtered.get(2).map(|s| s.as_str()) {
+            None | Some("list") => cmd_skill_help(),
+            Some("install") | Some("add") => {
+                let mut dir: Option<String> = None;
+                let mut j = 3;
+                while j < filtered.len() {
+                    match filtered[j].as_str() {
+                        "--dir" => {
+                            dir = Some(take_value(&filtered, j));
+                            j += 2;
+                        }
+                        other => {
+                            eprintln!("Unknown skill option: {}", other);
+                            eprintln!("Usage: seal skill install [--dir <root>]");
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                cmd_skill_install(dir.as_deref());
+            }
+            Some(other) => {
+                eprintln!("Unknown skill command: {}", other);
+                eprintln!("Usage: seal skill [install [--dir <root>]]");
                 std::process::exit(1);
             }
         },

@@ -26,8 +26,9 @@ with reveal, copy and delete on each row](docs/images/seal-gui.png)
   sensitive is written to disk
 - **Per-item Touch ID (macOS)** — signed builds can protect individual items
   with Touch ID or password fallback; list/health checks never read passwords
-- **Agent skill** — ships with a Claude Code / opencode skill that encodes the
-  safety contract for AI agents (never print secrets, never write them to files)
+- **Agent skill** — one Agent Skills `SKILL.md` for Claude Code, Codex,
+  opencode and any tool that reads the format; encodes the safety contract for
+  AI agents (never print a secret, never write one to a file)
 
 ## Install
 
@@ -104,14 +105,24 @@ migrating.
 
 ## Agent skill
 
-An agent skill ships in `skills/seal/` and is installed automatically by
-`install.sh` to `~/.claude/skills/seal/` (read by both Claude Code and
-opencode). The brew formula installs it to `share/seal/skills/seal/` and prints
-the symlink command in its caveats.
-
-The skill encodes the safety contract for agents: never print a secret value,
-never write secrets to files, and consume via `seal get` inline
+Seal ships an [Agent Skill](skills/seal/SKILL.md) that encodes the safety
+contract for coding agents: never print a secret value, never write secrets to
+files, and consume via `seal get` inline
 (`export TOKEN="$(seal get project/key)"`).
+
+`seal skill install` writes it wherever each agent looks — Claude Code, Codex,
+opencode, and the shared `~/.agents/skills` hub — using the same layout on
+macOS, Linux, and Windows:
+
+```sh
+seal skill install
+seal skill install --dir <root>     # any other skills root
+```
+
+Only agents already installed on the machine get a directory (plus the shared
+hub), so a fresh home directory is not littered with empty agent folders.
+`./install.sh` runs it automatically, and the brew formula prints the command
+in its caveats.
 
 ## Documentation
 

@@ -159,16 +159,22 @@ storage format was unchanged (`seal:{vault}:{key}`).
 
 ## Agent skill packaging
 
-**Decision:** ship an agent skill (`skills/seal/SKILL.md`) that installs to
-`~/.claude/skills/seal/` (read by both Claude Code and opencode), and encode
-the safety contract for AI agents.
+**Decision:** ship an agent skill (`skills/seal/SKILL.md`) and install it with
+`seal skill install` into every agent found on the machine — Claude Code
+(`~/.claude/skills/seal`), Codex (`~/.codex/skills/seal`), opencode
+(`~/.config/opencode/skills/seal`) and the shared `~/.agents/skills/seal` hub —
+and encode the safety contract for AI agents.
 
 **Rationale:** AI agents are a primary consumer of a secrets CLI, and they need
 explicit rules — never print a secret, never write secrets to files, consume
-via `seal get` inline.
+via `seal get` inline. One SKILL.md works across tools, and compiling it into
+the CLI keeps installation cross-platform instead of depending on Unix
+symlinks.
 
-**Consequences:** the skill is installed by `install.sh`, shipped by the brew
-formula to `share/seal/skills/seal/`, and documented in the README.
+**Consequences:** `install.sh` runs the command after installing the binary;
+the brew formula keeps a copy under `share/seal/skills/seal/` for packaging and
+prints the command in its caveats; `--dir` covers agents not in the built-in
+list.
 
 ## No read verb — Seal as ssh-agent for secrets
 

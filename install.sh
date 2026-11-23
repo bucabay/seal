@@ -51,10 +51,9 @@ if [ -n "$ACTIVE" ] && [ "$ACTIVE" != "$INSTALL_DIR/seal" ]; then
   echo "    Remove it (e.g. 'brew uninstall seal') or put $INSTALL_DIR ahead of it."
 fi
 
-# Install the agent skill (Claude Code + opencode both read ~/.claude/skills)
-SKILL_DIR="${HOME}/.claude/skills/seal"
-mkdir -p "$SKILL_DIR"
-cp "$(pwd)/skills/seal/SKILL.md" "$SKILL_DIR/SKILL.md"
-echo "==> Installed skill: $SKILL_DIR/SKILL.md"
+# Install the agent skill wherever Claude Code, Codex and opencode look for it.
+# The skill is compiled into the binary, so this is the same on every platform.
+echo "==> Installing agent skill..."
+"$INSTALL_DIR/seal" skill install
 
 echo "==> Verify with: seal --help"

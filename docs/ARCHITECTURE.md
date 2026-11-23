@@ -214,5 +214,6 @@ cargo build --manifest-path src-tauri/Cargo.toml --no-default-features  # CLI on
 - **GitHub Releases** (`.github/workflows/release.yml`) — `tauri-action` builds
   and attaches the GUI bundles (`.dmg`, `.msi`/`.exe`, `.deb`/`.AppImage`) for
   macOS aarch64/x86_64, Windows, and Linux on every `v*` tag.
-- **install.sh** — source installer: builds the CLI, symlinks it, installs the
-  agent skill.
+- **install.sh** — source installer: builds the CLI, symlinks it, and installs
+  the agent skill for Claude Code, Codex, opencode and the shared
+  `~/.agents/skills` hub.
