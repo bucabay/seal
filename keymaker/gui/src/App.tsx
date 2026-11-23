@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   KeyRound,
   Play,
@@ -32,7 +32,7 @@ import { cn, describeEvent, when } from "@/lib/utils";
 import { SecretRow, type RowStatus } from "@/components/secret-row";
 import { useAutosave } from "@/hooks/use-autosave";
 import { AddSecret } from "@/components/add-secret";
-import { grouped, isExpanded, loadCollapsed, saveCollapsed } from "@/lib/group";
+import { DEFAULT_ISSUER, grouped, isExpanded, loadCollapsed, saveCollapsed } from "@/lib/group";
 
 type Tab = "secrets" | "approvals" | "tasks" | "endpoints" | "audit";
 
@@ -104,6 +104,12 @@ export default function App() {
    * one row. One piece of state, because there is only ever one form.
    */
   const [addAt, setAddAt] = useState<{ issuer: string; after?: string } | null>(null);
+  const [focusRequest, setFocusRequest] = useState(0);
+  /** Session ordering keeps a run of entries together, even while saving. */
+  const [entryOrder, setEntryOrder] = useState<string[]>([]);
+  const localRows = useRef(new Map<string, RefRow>());
+  const pendingReads = useRef(new Map<string, Promise<string>>());
+  const pendingProtection = useRef(new Set<string>());
   /** Groups the user has folded away. Remembered across restarts. */
   const [collapsed, setCollapsed] = useState<Set<string>>(loadCollapsed);
   const [result, setResult] = useState<(RunResult & { task: string }) | null>(null);
@@ -115,12 +121,12 @@ export default function App() {
     try {
       await api.save(reference, value);
     } catch (e) {
-      setError(String(e));
+      setError(`${reference} was not saved: ${String(e)}`);
       throw e;
     }
-    // Keep the value on screen. It is already there — the user just typed it —
-    // and clearing the field after a successful save reads as losing the edit.
-    setRevealed((r) => ({ ...r, [reference]: value }));
+    // Keep deliberately revealed rows visible, without revealing newly added
+    // secrets or reopening a row the user hid while its write was pending.
+    setRevealed((r) => reference in r ? { ...r, [reference]: value } : r);
     setDrafts((d) => {
       // Only retire the draft if it is still the text that was just written.
       // Typing carries on while a write is in the air, and discarding the
@@ -137,9 +143,11 @@ export default function App() {
         row.reference === reference && !row.present ? { ...row, present: true } : row,
       ),
     );
+    const local = localRows.current.get(reference);
+    if (local) localRows.current.set(reference, { ...local, present: true });
   }, []);
 
-  const { state: saveState, schedule, flush, flushAll } = useAutosave<string>(commit);
+  const { state: saveState, schedule, flush, flushAll, cancel, isBusy } = useAutosave<string>(commit);
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -153,7 +161,14 @@ export default function App() {
         api.health(),
         api.approvals(),
       ]);
-      setRefs(r);
+      // A refresh must not erase an optimistic row or a failed entry's draft.
+      const received = new Set(r.map((row) => row.reference));
+      for (const row of r) {
+        if (row.present && localRows.current.get(row.reference)?.present) {
+          localRows.current.delete(row.reference);
+        }
+      }
+      setRefs([...r, ...[...localRows.current.values()].filter((row) => !received.has(row.reference))]);
       setTasks(t);
       setEndpoints(e);
       setAudit(a);
@@ -205,9 +220,30 @@ export default function App() {
     }
   }
 
+  function read(reference: string): Promise<string> {
+    const pending = pendingReads.current.get(reference);
+    if (pending) return pending;
+    const request = api.reveal(reference).finally(() => pendingReads.current.delete(reference));
+    pendingReads.current.set(reference, request);
+    return request;
+  }
+
+  async function enableBiometrics(reference: string) {
+    if (pendingProtection.current.has(reference)) return;
+    pendingProtection.current.add(reference);
+    try {
+      await api.enableBiometrics(reference);
+      await refresh();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      pendingProtection.current.delete(reference);
+    }
+  }
+
   async function reveal(reference: string) {
     try {
-      const value = await api.reveal(reference);
+      const value = await read(reference);
       setRevealed((r) => ({ ...r, [reference]: value }));
     } catch (err) {
       setError(String(err));
@@ -228,11 +264,61 @@ export default function App() {
     // An empty field is a half-finished edit; the row says "empty" and nothing
     // is written until there is something to write.
     if (value !== "") schedule(reference, value);
+    else cancel(reference);
+  }
+
+  function flushDraft(reference: string) {
+    const draft = drafts[reference];
+    if (draft === "") {
+      cancel(reference);
+      return;
+    }
+    // A failed write is no longer queued. Explicit commit retries its draft.
+    if (draft !== undefined && !isBusy(reference)) schedule(reference, draft);
+    flush(reference);
+  }
+
+  function openAfter(row: RefRow) {
+    setEntryOrder((order) => order.length ? order : grouped(refs, "").flatMap((group) => group.rows.map((r) => r.reference)));
+    setAddAt({ issuer: row.issuer, after: row.reference });
+    setFocusRequest((request) => request + 1);
+  }
+
+  function addSecret(reference: string, value: string, inline: boolean) {
+    const slash = reference.indexOf("/");
+    const issuer = slash < 0 ? DEFAULT_ISSUER : reference.slice(0, slash);
+    const row: RefRow = {
+      reference, issuer, name: slash < 0 ? reference : reference.slice(slash + 1),
+      present: false, used_by: [],
+    };
+    if (!refs.some((existing) => existing.reference === reference)) {
+      localRows.current.set(reference, row);
+      // Snapshot the visible ordering, then insert under the anchor or append
+      // to the provider. Subsequent status changes cannot shuffle these rows.
+      const order = grouped(refs, "", entryOrder).flatMap((group) => group.rows.map((r) => r.reference));
+      const anchor = inline && addAt?.issuer === issuer ? addAt.after : undefined;
+      const after = anchor ? order.indexOf(anchor) : -1;
+      order.splice(after < 0 ? order.length : after + 1, 0, reference);
+      setEntryOrder(order);
+      setRefs((rows) => [...rows, row]);
+    }
+    setDrafts((drafts) => ({ ...drafts, [reference]: value }));
+    schedule(reference, value);
+    flush(reference);
+    setCollapsed((current) => {
+      const next = new Set(current);
+      next.delete(issuer);
+      saveCollapsed(next);
+      return next;
+    });
+    // A destination outside the current filter must still be visible.
+    setQuery("");
+    if (inline) openAfter(row);
   }
 
   async function copy(reference: string) {
     try {
-      const value = revealed[reference] ?? (await api.reveal(reference));
+      const value = revealed[reference] ?? (await read(reference));
       await navigator.clipboard.writeText(value);
       setCopied(reference);
       setTimeout(() => setCopied((c) => (c === reference ? null : c)), 1600);
@@ -244,6 +330,7 @@ export default function App() {
   async function remove(reference: string) {
     try {
       await api.remove(reference);
+      localRows.current.delete(reference);
       hide(reference);
       await refresh();
     } catch (err) {
@@ -252,7 +339,7 @@ export default function App() {
   }
 
   // Groups are derived from the names, so there is nothing to keep in step.
-  const groups = grouped(refs, query);
+  const groups = grouped(refs, query, entryOrder);
 
   function toggleGroup(issuer: string) {
     setCollapsed((current) => {
@@ -383,7 +470,7 @@ export default function App() {
                 )}
               </div>
 
-              <AddSecret onAdded={() => void refresh()} />
+              <AddSecret onCommit={(reference, value) => addSecret(reference, value, false)} />
 
               {groups.length === 0 ? (
                 <Empty>
@@ -455,19 +542,19 @@ export default function App() {
                           onReveal={() => void reveal(r.reference)}
                           onHide={() => hide(r.reference)}
                           onChange={(v) => edit(r.reference, v)}
-                          onFlush={() => flush(r.reference)}
-                          onEnter={() =>
-                            setAddAt({ issuer: r.issuer, after: r.reference })
-                          }
+                          onFlush={() => flushDraft(r.reference)}
+                          onEnter={() => openAfter(r)}
                           onCopy={() => void copy(r.reference)}
                           onDelete={() => void remove(r.reference)}
+                          onEnableBiometrics={() => void enableBiometrics(r.reference)}
                         />
                         {/* Enter on any row opens the next one directly
                             beneath it, wherever in the list it was. */}
                         {addAt?.after === r.reference && (
                           <AddSecret
                             prefill={`${r.issuer}/`}
-                            onAdded={() => void refresh()}
+                            focusRequest={focusRequest}
+                            onCommit={(reference, value) => addSecret(reference, value, true)}
                             onCancel={() => setAddAt(null)}
                           />
                         )}
@@ -479,7 +566,8 @@ export default function App() {
                     {addAt?.issuer === group.issuer && addAt.after === undefined && (
                       <AddSecret
                         prefill={`${group.issuer}/`}
-                        onAdded={() => void refresh()}
+                        focusRequest={focusRequest}
+                        onCommit={(reference, value) => addSecret(reference, value, true)}
                         onCancel={() => setAddAt(null)}
                       />
                     )}

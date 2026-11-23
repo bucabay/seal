@@ -6,6 +6,7 @@ export type RefRow = {
   issuer: string;
   name: string;
   present: boolean;
+  biometric?: boolean | null;
   used_by: string[];
 };
 export type TaskRow = { name: string; command: string };
@@ -48,6 +49,7 @@ export const api = {
    * and every use is written to the audit chain.
    */
   reveal: (reference: string) => invoke<string>("reveal", { reference }),
+  enableBiometrics: (reference: string) => invoke<void>("enable_biometrics", { reference }),
   save: (reference: string, value: string) =>
     invoke<void>("save_secret", { reference, value }),
   remove: (reference: string) => invoke<void>("delete_secret", { reference }),

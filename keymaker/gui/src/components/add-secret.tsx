@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from "react";
-import { Plus, Check } from "lucide-react";
-import { api } from "@/lib/api";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Plus } from "lucide-react";
 import { rawInput } from "@/lib/raw-input";
 import { splitPasted } from "@/lib/group";
+import { actionFor, nextPrefix, referenceProblem, shouldPreventDefault } from "@/lib/entry";
 
 /**
  * Adding secrets, one after another.
@@ -17,20 +17,21 @@ import { splitPasted } from "@/lib/group";
  */
 export function AddSecret({
   prefill,
-  onAdded,
+  onCommit,
+  focusRequest = 0,
   onCancel,
 }: {
   /** e.g. `stripe/`, when adding from inside a group. */
   prefill?: string;
-  onAdded: () => void;
+  onCommit: (reference: string, value: string) => void;
+  focusRequest?: number;
   onCancel?: () => void;
 }) {
   const [open, setOpen] = useState(prefill !== undefined);
   const [reference, setReference] = useState(prefill ?? "");
   const [value, setValue] = useState("");
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [justAdded, setJustAdded] = useState<string | null>(null);
+  const [entrySequence, setEntrySequence] = useState(0);
   const referenceField = useRef<HTMLInputElement>(null);
   const valueField = useRef<HTMLInputElement>(null);
 
@@ -52,9 +53,26 @@ export function AddSecret({
 
   // Whenever the form opens, the cursor belongs in the reference field —
   // after `stripe/` when adding inside a group, not in the value.
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (open) focusReference();
-  }, [open]);
+  }, [open, focusRequest, entrySequence]);
+
+  /** Enter and Tab mean the same thing; which one depends only on the field. */
+  function onKey(e: React.KeyboardEvent, field: "name" | "value") {
+    const key = { ...e, isComposing: e.nativeEvent.isComposing };
+    if (shouldPreventDefault(key, field)) e.preventDefault();
+    switch (actionFor(key, field)) {
+      case "next":
+        valueField.current?.focus();
+        break;
+      case "commit":
+        commit();
+        break;
+      case "cancel":
+        close();
+        break;
+    }
+  }
 
   function takeReference(text: string) {
     const { reference: ref, value: pasted } = splitPasted(text);
@@ -70,16 +88,23 @@ export function AddSecret({
     setReference("");
     setValue("");
     setError(null);
-    setJustAdded(null);
     onCancel?.();
   }
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
+  /**
+   * Save what is typed and be ready for the next key straight away.
+   *
+   * The fields clear before the write finishes, on purpose: entering secrets is
+   * a run, and waiting on the keychain between each one would make it feel
+   * like a form rather than a list. The parent retains the submitted entry and
+   * its save status independently of this next-entry form.
+   */
+  function commit() {
     setError(null);
     const ref = reference.trim();
-    if (!ref) {
-      setError("a reference is needed, for example stripe/api-key");
+    const problem = referenceProblem(ref);
+    if (problem) {
+      setError(problem);
       focusReference();
       return;
     }
@@ -88,21 +113,19 @@ export function AddSecret({
       valueField.current?.focus();
       return;
     }
-    setBusy(true);
-    try {
-      await api.save(ref, value);
-      // Stay open and reset for the next one. Back to the prefix when adding
-      // inside a group, since the next key is probably the same issuer.
-      setReference(prefill ?? "");
-      setValue("");
-      setJustAdded(ref);
-      focusReference();
-      onAdded();
-    } catch (err) {
-      setError(String(err).replace(/^.*?constraint violation: /, ""));
-    } finally {
-      setBusy(false);
-    }
+
+    // A prefix is a convenience, not a constraint: whatever issuer was actually
+    // typed is where this lands, and where the next one starts.
+    const captured = value;
+    setReference(nextPrefix(ref, prefill));
+    setValue("");
+    setEntrySequence((sequence) => sequence + 1);
+    onCommit(ref, captured);
+  }
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    commit();
   }
 
   if (!open) {
@@ -127,7 +150,7 @@ export function AddSecret({
           ref={referenceField}
           value={reference}
           onChange={(e) => takeReference(e.target.value)}
-          onKeyDown={(e) => e.key === "Escape" && close()}
+          onKeyDown={(e) => onKey(e, "name")}
           placeholder="stripe/api-key — or paste `stripe/api-key sk_xxx`"
           className="min-w-0 flex-1 border border-line bg-background px-2 py-1 font-mono text-xs focus:border-primary focus:outline-none"
           aria-label="Reference"
@@ -138,17 +161,16 @@ export function AddSecret({
           type="password"
           value={value}
           onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => e.key === "Escape" && close()}
-          placeholder="value — enter to save"
+          onKeyDown={(e) => onKey(e, "value")}
+          placeholder="value — enter or tab saves"
           className="w-[34%] shrink-0 border border-line bg-background px-2 py-1 font-mono text-xs focus:border-primary focus:outline-none"
           aria-label="Value"
         />
         <button
           type="submit"
-          disabled={busy}
           className="shrink-0 border border-primary px-2.5 py-1 font-mono text-[11px] uppercase tracking-wider text-primary hover:bg-primary hover:text-primary-foreground disabled:opacity-40"
         >
-          {busy ? "saving" : "save"}
+          save
         </button>
         <button
           type="button"
@@ -160,11 +182,6 @@ export function AddSecret({
       </div>
       {error ? (
         <div className="mt-2 font-mono text-[11px] text-destructive">{error}</div>
-      ) : justAdded ? (
-        <div className="mt-2 flex items-center gap-1.5 font-mono text-[11px] text-primary">
-          <Check size={12} />
-          added {justAdded} — next one, or `done` to finish
-        </div>
       ) : null}
     </form>
   );

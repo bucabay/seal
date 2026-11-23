@@ -60,6 +60,10 @@ pub enum Event {
     SecretStored {
         reference: String,
     },
+    /// A human moved an item into the per-item user-presence keychain.
+    SecretProtectionEnabled {
+        reference: String,
+    },
     SecretDeleted {
         reference: String,
     },

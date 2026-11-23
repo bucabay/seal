@@ -43,10 +43,11 @@ export function matches(row: RefRow, query: string): boolean {
  * Group rows by issuer for display.
  *
  * Groups are derived, never stored, so they cannot fall out of step with the
- * keys they hold. Within a group, references with no value sort first: those
- * are what people come here to fix.
+ * keys they hold. Active entry sessions supply a stable order; otherwise,
+ * references with no value sort first: those are what people come here to fix.
  */
-export function grouped(rows: RefRow[], query: string): Group[] {
+export function grouped(rows: RefRow[], query: string, entryOrder: readonly string[] = []): Group[] {
+  const positions = new Map(entryOrder.map((reference, index) => [reference, index]));
   const byIssuer = new Map<string, RefRow[]>();
   for (const row of rows) {
     if (!matches(row, query)) continue;
@@ -59,6 +60,11 @@ export function grouped(rows: RefRow[], query: string): Group[] {
     .map(([issuer, list]) => ({
       issuer,
       rows: [...list].sort((a, b) => {
+        const aPosition = positions.get(a.reference);
+        const bPosition = positions.get(b.reference);
+        if (aPosition !== undefined || bPosition !== undefined) {
+          return (aPosition ?? Infinity) - (bPosition ?? Infinity);
+        }
         if (a.present !== b.present) return a.present ? 1 : -1;
         return a.reference.localeCompare(b.reference);
       }),

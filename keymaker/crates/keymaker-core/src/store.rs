@@ -39,6 +39,20 @@ impl fmt::Debug for Secret {
 
 pub trait SecretStore: fmt::Debug {
     fn get(&self, key: &str) -> Result<Secret>;
+    /// Check presence without reading a value when the backend supports it.
+    fn contains(&self, key: &str) -> Result<bool> {
+        match self.get(key) {
+            Ok(_) => Ok(true),
+            Err(Error::NotFound(_)) => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+    /// None on platforms without this per-item biometric policy.
+    fn biometric_names(&self) -> Result<Option<Vec<String>>> { Ok(None) }
+    fn names_are_complete(&self) -> bool { false }
+    fn enable_biometrics(&mut self, _key: &str) -> Result<()> {
+        Err(Error::Constraint("Biometric item protection is available on macOS".into()))
+    }
     fn set(&mut self, key: &str, value: Secret) -> Result<()>;
     fn delete(&mut self, key: &str) -> Result<()>;
     /// Names only. This is the one listing an agent may see.
@@ -65,6 +79,11 @@ impl MemoryStore {
 }
 
 impl SecretStore for MemoryStore {
+    fn names_are_complete(&self) -> bool { true }
+    fn contains(&self, key: &str) -> Result<bool> {
+        Ok(self.items.contains_key(key))
+    }
+
     fn get(&self, key: &str) -> Result<Secret> {
         self.items
             .get(key)
@@ -89,7 +108,7 @@ impl SecretStore for MemoryStore {
     }
 }
 
-/// macOS Keychain, via the `security` CLI.
+/// macOS Keychain, with native per-item authorization and legacy upgrade support.
 #[cfg(target_os = "macos")]
 #[derive(Debug, Clone)]
 pub struct KeychainStore {
@@ -103,6 +122,47 @@ impl KeychainStore {
             service: service.into(),
         }
     }
+
+    fn legacy_names(&self) -> Result<Vec<String>> {
+        let out = std::process::Command::new("security")
+            .arg("dump-keychain")
+            .output()
+            .map_err(|e| Error::Os(format!("running security: {}", e)))?;
+        if !out.status.success() {
+            return Err(Error::Store("Cannot enumerate keychain item attributes".into()));
+        }
+        Ok(parse_dump(&String::from_utf8_lossy(&out.stdout), &self.service))
+    }
+
+    fn delete_legacy(&self, key: &str) -> Result<()> {
+        let out = std::process::Command::new("security")
+            .args(["delete-generic-password", "-a", key, "-s", &self.service])
+            .output()
+            .map_err(|e| Error::Os(format!("running security: {}", e)))?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(Error::Store("Could not remove the legacy keychain item".into()))
+        }
+    }
+
+    // One standard-keychain read; also used during an explicit biometric upgrade.
+    fn legacy_get(&self, key: &str) -> Result<Secret> {
+        let out = std::process::Command::new("security")
+            .args(["find-generic-password", "-a", key, "-s", &self.service, "-w"])
+            .output()
+            .map_err(|e| Error::Os(format!("running security: {}", e)))?;
+        if !out.status.success() {
+            return if out.status.code() == Some(44) {
+                Err(Error::NotFound(format!("secret `{}`", key)))
+            } else {
+                Err(Error::Store("Keychain access was cancelled or denied".into()))
+            };
+        }
+        let value = String::from_utf8(out.stdout)
+            .map_err(|_| Error::Store("Keychain value is not UTF-8".into()))?;
+        Ok(Secret::new(value.strip_suffix('\n').unwrap_or(&value)))
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -114,53 +174,70 @@ impl Default for KeychainStore {
 
 #[cfg(target_os = "macos")]
 impl SecretStore for KeychainStore {
+    fn biometric_names(&self) -> Result<Option<Vec<String>>> {
+        let mut protected = seal_keychain::names(&self.service).map_err(Error::Store)?;
+        // A failed migration may have left the old copy. Do not describe an
+        // item as protected until that unprotected copy has been removed.
+        let legacy = self.legacy_names()?;
+        protected.retain(|name| !legacy.contains(name));
+        Ok(Some(protected))
+    }
+
+    fn names_are_complete(&self) -> bool { true }
+
+    fn enable_biometrics(&mut self, key: &str) -> Result<()> {
+        seal_keychain::ensure_available().map_err(Error::Store)?;
+        if !seal_keychain::contains(&self.service, key).map_err(Error::Store)? {
+            let value = self.legacy_get(key)?;
+            seal_keychain::set(&self.service, key, value.expose()).map_err(Error::Store)?;
+        }
+        // Commit the protected copy before removing the original. Retrying a
+        // partial migration only cleans up: it never reads the password again.
+        if self.legacy_names()?.iter().any(|name| name == key) {
+            self.delete_legacy(key)?;
+        }
+        Ok(())
+    }
+
+    fn contains(&self, key: &str) -> Result<bool> {
+        // Item attributes are public metadata. Presence checks must not read
+        // passwords: list_refs and health both run during a GUI refresh.
+        Ok(self.names()?.iter().any(|name| name == key))
+    }
+
     fn get(&self, key: &str) -> Result<Secret> {
-        let out = std::process::Command::new("security")
-            .args([
-                "find-generic-password",
-                "-a",
-                key,
-                "-s",
-                &self.service,
-                "-w",
-            ])
-            .output()
-            .map_err(|e| Error::Os(format!("running security: {}", e)))?;
-        if !out.status.success() {
-            return Err(Error::NotFound(format!("secret `{}`", key)));
+        if seal_keychain::contains(&self.service, key).map_err(Error::Store)? {
+            return seal_keychain::get(&self.service, key).map(Secret::new).map_err(Error::Store);
         }
-        let value = String::from_utf8_lossy(&out.stdout).trim_end().to_string();
-        if value.is_empty() {
-            return Err(Error::NotFound(format!("secret `{}`", key)));
-        }
-        Ok(Secret::new(value))
+        self.legacy_get(key)
     }
 
     fn set(&mut self, key: &str, value: Secret) -> Result<()> {
-        // `-U` updates in place rather than needing a delete first.
+        if seal_keychain::contains(&self.service, key).map_err(Error::Store)? {
+            return seal_keychain::set(&self.service, key, value.expose()).map_err(Error::Store);
+        }
+        if !self.legacy_names()?.iter().any(|name| name == key)
+            && seal_keychain::available().map_err(Error::Store)? {
+            return seal_keychain::set(&self.service, key, value.expose()).map_err(Error::Store);
+        }
         let out = std::process::Command::new("security")
-            .args([
-                "add-generic-password",
-                "-a",
-                key,
-                "-s",
-                &self.service,
-                "-w",
-                value.expose(),
-                "-U",
-            ])
+            .args(["add-generic-password", "-a", key, "-s", &self.service,
+                "-w", value.expose(), "-T", "", "-U"])
             .output()
             .map_err(|e| Error::Os(format!("running security: {}", e)))?;
-        if out.status.success() {
-            Ok(())
-        } else {
-            Err(Error::Store(
-                String::from_utf8_lossy(&out.stderr).trim().to_string(),
-            ))
+        if out.status.success() { Ok(()) } else {
+            Err(Error::Store("Keychain save failed or authorization was denied".into()))
         }
     }
 
     fn delete(&mut self, key: &str) -> Result<()> {
+        if seal_keychain::contains(&self.service, key).map_err(Error::Store)? {
+            seal_keychain::delete(&self.service, key).map_err(Error::Store)?;
+            if self.legacy_names()?.iter().any(|name| name == key) {
+                self.delete_legacy(key)?;
+            }
+            return Ok(());
+        }
         let out = std::process::Command::new("security")
             .args(["delete-generic-password", "-a", key, "-s", &self.service])
             .output()
@@ -173,19 +250,11 @@ impl SecretStore for KeychainStore {
     }
 
     fn names(&self) -> Result<Vec<String>> {
-        // `dump-keychain` prints attributes only; printing a value needs `-d`,
-        // which is never passed here.
-        let out = std::process::Command::new("security")
-            .arg("dump-keychain")
-            .output()
-            .map_err(|e| Error::Os(format!("running security: {}", e)))?;
-        if !out.status.success() {
-            return Ok(Vec::new());
-        }
-        Ok(parse_dump(
-            &String::from_utf8_lossy(&out.stdout),
-            &self.service,
-        ))
+        let mut names = self.legacy_names()?;
+        names.extend(seal_keychain::names(&self.service).map_err(Error::Store)?);
+        names.sort();
+        names.dedup();
+        Ok(names)
     }
 }
 
@@ -369,6 +438,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(target_os = "macos", ignore = "requires interactive OS-keychain approval")]
     fn the_platform_store_round_trips_a_value() {
         // Exercises whichever backend this platform actually uses, so the
         // cfg-gated code is not merely compiled but run.

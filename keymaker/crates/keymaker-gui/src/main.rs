@@ -96,6 +96,11 @@ fn reveal(reference: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn enable_biometrics(reference: String) -> Result<(), String> {
+    with_gui(|g| g.enable_biometrics(&reference).map_err(|e| e.to_string()))
+}
+
+#[tauri::command]
 fn save_secret(reference: String, value: String) -> Result<(), String> {
     with_gui(|g| g.save(&reference, &value).map_err(|e| e.to_string()))
 }
@@ -183,6 +188,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             list_refs,
             reveal,
+            enable_biometrics,
             save_secret,
             delete_secret,
             list_tasks,

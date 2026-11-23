@@ -1,8 +1,9 @@
-import { Eye, EyeOff, Copy, Check, Trash2 } from "lucide-react";
+import { Eye, EyeOff, Copy, Check, Trash2, Fingerprint } from "lucide-react";
 import type { RefRow } from "@/lib/api";
 import type { SaveState } from "@/hooks/use-autosave";
 import { cn } from "@/lib/utils";
 import { rawInput } from "@/lib/raw-input";
+import { actionFor, shouldPreventDefault } from "@/lib/entry";
 
 const MASK = "•".repeat(24);
 
@@ -49,6 +50,7 @@ export function SecretRow({
   onEnter,
   onCopy,
   onDelete,
+  onEnableBiometrics,
 }: {
   row: RefRow;
   /** The revealed value, or null while hidden. */
@@ -65,10 +67,11 @@ export function SecretRow({
   onEnter: () => void;
   onCopy: () => void;
   onDelete: () => void;
+  onEnableBiometrics?: () => void;
 }) {
   const isRevealed = revealed !== null;
   const shown = draft ?? revealed ?? "";
-  const editable = isRevealed || !row.present;
+  const editable = isRevealed || !row.present || draft !== undefined;
 
   return (
     <div className="border-b border-line last:border-b-0">
@@ -116,6 +119,7 @@ export function SecretRow({
           )}
           value={editable ? shown : MASK}
           placeholder={row.present ? "" : "type a value — it saves itself"}
+          type={isRevealed ? "text" : "password"}
           readOnly={!editable}
           onClick={() => !isRevealed && row.present && onReveal()}
           onChange={(e) => onChange(e.target.value)}
@@ -123,17 +127,30 @@ export function SecretRow({
           // the user wait out the debounce.
           onBlur={onFlush}
           onKeyDown={(e) => {
-            if (e.key !== "Enter") return;
-            // Save this one now rather than waiting out the debounce, then
-            // carry on to the next key — the same rhythm as the add form.
-            e.preventDefault();
-            onFlush();
-            onEnter();
+            // The same rhythm as the add form: Enter and Tab both save this
+            // one now, rather than waiting out the debounce, and open the next.
+            const key = { ...e, isComposing: e.nativeEvent.isComposing };
+            if (shouldPreventDefault(key, "value")) e.preventDefault();
+            if (actionFor(key, "value") === "commit") {
+              onFlush();
+              onEnter();
+            }
           }}
           aria-label={isRevealed ? `Value of ${row.reference}` : `${row.reference}, hidden`}
         />
 
         <div className="flex shrink-0 items-center gap-1">
+          {row.present && row.biometric !== undefined && row.biometric !== null && (
+            <button
+              onClick={row.biometric ? undefined : onEnableBiometrics}
+              disabled={row.biometric}
+              className={cn("p-1.5", row.biometric ? "text-primary" : "text-muted-foreground hover:text-foreground")}
+              title={row.biometric ? "Protected per item with Touch ID or password" : "Enable Touch ID protection for this item"}
+              aria-label={row.biometric ? "Touch ID protected" : "Enable Touch ID"}
+            >
+              <Fingerprint size={15} />
+            </button>
+          )}
           {row.present && (
             <button
               onClick={isRevealed ? onHide : onReveal}
@@ -166,6 +183,11 @@ export function SecretRow({
           )}
         </div>
       </div>
+      {status === "error" && (
+        <div className="pb-2 pl-9 pr-4 font-mono text-[11px] text-destructive">
+          Not saved. Your value is retained; press Enter or Tab in the value to retry.
+        </div>
+      )}
       {copied && (
         <div className="pb-2 pl-9 pr-4 font-mono text-[11px] text-muted-foreground">
           on the clipboard — any process on this machine can read it

@@ -25,6 +25,7 @@ pub struct RefRow {
     pub issuer: String,
     pub name: String,
     pub present: bool,
+    pub biometric: Option<bool>,
     /// Environments that bind this reference, for context in the list.
     pub used_by: Vec<String>,
 }
@@ -91,8 +92,10 @@ impl<'a> Gui<'a> {
     /// Every reference the manifest mentions, plus anything the store already
     /// holds, so a secret saved before it was referenced is still visible.
     pub fn refs(&self) -> Vec<RefRow> {
-        let mut names: BTreeSet<String> =
+        let stored: BTreeSet<String> =
             self.store.names().unwrap_or_default().into_iter().collect();
+        let mut names = stored.clone();
+        let biometric = self.store.biometric_names().unwrap_or(None);
         let mut used_by: std::collections::BTreeMap<String, Vec<String>> = Default::default();
 
         for env in self.manifest.env.keys() {
@@ -119,7 +122,12 @@ impl<'a> Gui<'a> {
                 RefRow {
                     issuer: issuer.to_string(),
                     name: name.to_string(),
-                    present: self.store.get(&reference).is_ok(),
+                    present: if self.store.names_are_complete() {
+                        stored.contains(&reference)
+                    } else {
+                        self.store.contains(&reference).unwrap_or(false)
+                    },
+                    biometric: biometric.as_ref().map(|names| names.contains(&reference)),
                     used_by: used_by.get(&reference).cloned().unwrap_or_default(),
                     reference,
                 }
@@ -135,6 +143,12 @@ impl<'a> Gui<'a> {
             reference: reference.to_string(),
         });
         Ok(value.expose().to_string())
+    }
+
+    pub fn enable_biometrics(&mut self, reference: &str) -> Result<()> {
+        self.store.enable_biometrics(reference)?;
+        self.audit.append(Event::SecretProtectionEnabled { reference: reference.to_string() });
+        Ok(())
     }
 
     pub fn save(&mut self, reference: &str, value: &str) -> Result<()> {
@@ -324,6 +338,37 @@ inject = { kind = "header", name = "Authorization", format = "Bearer {secret}" }
             Manifest::from_toml(MANIFEST).unwrap(),
             Catalog::from_toml(CATALOG).unwrap(),
         )
+    }
+
+    #[test]
+    fn refresh_checks_presence_without_reading_and_reveal_reads_once() {
+        #[derive(Debug)]
+        struct CountingStore {
+            inner: MemoryStore,
+            reads: std::cell::Cell<usize>,
+        }
+        impl SecretStore for CountingStore {
+            fn get(&self, key: &str) -> Result<Secret> {
+                self.reads.set(self.reads.get() + 1);
+                self.inner.get(key)
+            }
+            fn contains(&self, key: &str) -> Result<bool> {
+                self.inner.contains(key)
+            }
+            fn names(&self) -> Result<Vec<String>> { self.inner.names() }
+            fn set(&mut self, key: &str, value: Secret) -> Result<()> { self.inner.set(key, value) }
+            fn delete(&mut self, key: &str) -> Result<()> { self.inner.delete(key) }
+        }
+        let (inner, manifest, catalog) = parts();
+        let mut store = CountingStore { inner, reads: std::cell::Cell::new(0) };
+        let clock = FixedClock::new(0);
+        {
+            let mut gui = Gui::new(&mut store, manifest, catalog, Log::new(&clock));
+            assert!(gui.refs().iter().any(|r| r.reference == "hardroad/db_url" && r.present));
+            assert!(gui.health().missing_refs.contains(&"stripe/sk_live".to_string()));
+            assert_eq!(gui.reveal("hardroad/db_url").unwrap(), "postgres://u:hunter2@db/prod");
+        }
+        assert_eq!(store.reads.get(), 1, "refresh must not cause password reads");
     }
 
     #[test]
