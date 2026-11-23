@@ -16,6 +16,7 @@ struct SecretEntry {
     env: String,
     /// True when `env` is not the environment the caller asked for.
     inherited: bool,
+    biometric: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -60,11 +61,18 @@ fn get_secret(key: String, vault: Option<String>, env: Option<String>) -> Result
         .map(|v| v.chain(&env))
         .unwrap_or_else(|| vec![env.clone()]);
     for link in chain {
-        if let Ok(value) = keychain::get(&index::account(&vault, &link, &key)) {
-            return Ok(value);
+        match keychain::get(&index::account(&vault, &link, &key)) {
+            Ok(value) => return Ok(value),
+            Err(e) if e.starts_with("Not found:") => continue,
+            Err(e) => return Err(e),
         }
     }
     Err(format!("Not found: {} (env {})", key, env))
+}
+
+#[tauri::command]
+fn enable_biometrics(key: String, vault: Option<String>, env: Option<String>) -> Result<(), String> {
+    keychain::enable_biometrics(&index::account(&or_default_vault(vault), &or_default_env(env), &key))
 }
 
 #[tauri::command]
@@ -88,12 +96,14 @@ fn list_secrets(vault: Option<String>, env: Option<String>) -> Result<Vec<Secret
     let vault_name = or_default_vault(vault);
     let env = or_default_env(env);
     let catalogue = index::load();
+    let biometric = keychain::biometric_accounts()?;
     let Some(v) = catalogue.vault(&vault_name) else {
         return Ok(Vec::new());
     };
     Ok(v.resolved_keys(&env)
         .into_iter()
         .map(|(key, owner)| SecretEntry {
+            biometric: biometric.as_ref().map(|accounts| accounts.contains(&index::account(&vault_name, &owner, &key))),
             key,
             vault: vault_name.clone(),
             inherited: owner != env,
@@ -172,6 +182,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             save_secret,
             get_secret,
+            enable_biometrics,
             delete_secret,
             list_secrets,
             list_vaults,

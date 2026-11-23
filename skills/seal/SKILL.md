@@ -142,12 +142,23 @@ keys), with any pattern still applied within it.
 
 ## How listing finds keys
 
-**macOS:** `seal list` enumerates the login keychain directly (`security
+**macOS:** `seal list` combines protected-item attribute queries with login
+keychain enumeration (`security
 dump-keychain`, which prints attribute *names* only — reading a value needs
 `-d`, which Seal never passes) and refreshes a local name cache at
 `~/Library/Application Support/seal/index.json`. There is nothing to rebuild: a
 missing or stale cache repairs itself on the next `list`, and secrets written by
 another build, or by `security` directly, show up straight away.
+
+Biometric rollout is deferred. Protected items use per-item Touch ID/password
+authorization in provisioned, signed app-like bundles (including the CLI). When
+provisioning is unavailable, unprotected items use standard OS-keychain access.
+Existing permissive `-A` items may not prompt until their access policy is changed.
+Listing never reads password data. A cancelled read is not retried against an
+older item or another environment. `seal protect project/key` upgrades an existing
+item; this is a human-triggered policy change, not something an agent should run
+automatically. CLI and GUI must share the signed keychain access group described
+in `docs/BIOMETRICS.md` to consume protected items.
 
 **Linux / Windows:** Secret Service and Credential Manager cannot be enumerated
 through the keyed API Seal uses, so that cache — `~/.config/seal/index.json` or

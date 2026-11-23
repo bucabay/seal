@@ -1,4 +1,4 @@
-import { Copy, Eye, EyeOff, Trash2 } from "lucide-react";
+import { Copy, Eye, EyeOff, Trash2, Fingerprint } from "lucide-react";
 
 import type { SaveState } from "@/hooks/use-autosave";
 
@@ -29,6 +29,8 @@ export interface SecretRowProps {
   env: string;
   /** True when the value comes from an environment this one extends. */
   inherited: boolean;
+  biometric?: boolean | null;
+  onEnableBiometrics?: () => void;
   /** The value to show, or null while it is still hidden. */
   value: string | null;
   status?: RowStatus;
@@ -46,6 +48,8 @@ export function SecretRow({
   name,
   env,
   inherited,
+  biometric,
+  onEnableBiometrics,
   value,
   status,
   onReveal,
@@ -117,6 +121,15 @@ export function SecretRow({
       </span>
 
       <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+        {biometric !== undefined && biometric !== null && (
+          <button
+            onClick={biometric ? undefined : onEnableBiometrics}
+            disabled={biometric}
+            className={`p-1.5 ${biometric ? "text-brand" : "text-muted-foreground hover:text-ink"}`}
+            title={biometric ? "Protected per item with Touch ID or password" : "Enable Touch ID protection for this item"}
+            aria-label={biometric ? "Touch ID protected" : "Enable Touch ID"}
+          ><Fingerprint size={15} /></button>
+        )}
         <button
           onClick={onReveal}
           className="inline-flex h-8 w-8 items-center justify-center text-muted-foreground hover:bg-accent/50 hover:text-ink"

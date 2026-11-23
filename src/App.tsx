@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { KeyRound, Plus } from "lucide-react";
 
@@ -20,6 +20,7 @@ interface Secret {
   env: string;
   /** True when the value comes from an environment this one extends. */
   inherited: boolean;
+  biometric?: boolean | null;
 }
 
 /**
@@ -57,6 +58,8 @@ function App() {
   const [loginOpen, setLoginOpen] = useState(false);
   const [addVaultOpen, setAddVaultOpen] = useState(false);
   const [addEnvOpen, setAddEnvOpen] = useState(false);
+  const pendingReads = useRef(new Map<string, Promise<string>>());
+  const pendingProtection = useRef(new Set<string>());
 
   const { user, signIn, signOut } = useUser();
 
@@ -194,10 +197,35 @@ function App() {
       return;
     }
     try {
-      const value: string = await invoke("get_secret", { key, vault, env });
+      const value = await readSecret(key);
       setStored((s) => ({ ...s, [key]: value }));
     } catch (e: any) {
       showToast(`Error: ${e}`);
+    }
+  };
+
+  const readSecret = (key: string): Promise<string> => {
+    const id = JSON.stringify([vault, env, key]);
+    const pending = pendingReads.current.get(id);
+    if (pending) return pending;
+    const request = invoke<string>("get_secret", { key, vault, env })
+      .finally(() => pendingReads.current.delete(id));
+    pendingReads.current.set(id, request);
+    return request;
+  };
+
+  const handleEnableBiometrics = async (secret: Secret) => {
+    const id = JSON.stringify([secret.vault, secret.env, secret.key]);
+    if (pendingProtection.current.has(id)) return;
+    pendingProtection.current.add(id);
+    try {
+      await invoke("enable_biometrics", { key: secret.key, vault: secret.vault, env: secret.env });
+      await loadSecrets();
+      showToast("Touch ID protection enabled");
+    } catch (e) {
+      showToast(`Error: ${e}`);
+    } finally {
+      pendingProtection.current.delete(id);
     }
   };
 
@@ -229,7 +257,7 @@ function App() {
       const value =
         drafts[key] ??
         stored[key] ??
-        (await invoke<string>("get_secret", { key, vault, env }));
+        (await readSecret(key));
       await navigator.clipboard.writeText(value);
       showToast("Copied");
     } catch (e: any) {
@@ -362,6 +390,8 @@ function App() {
           <div className="border-t border-line">
             {secrets.map((s) => (
               <SecretRow
+                biometric={s.biometric}
+                onEnableBiometrics={() => void handleEnableBiometrics(s)}
                 key={s.key}
                 name={s.key}
                 env={s.env}

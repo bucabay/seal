@@ -21,8 +21,13 @@ fn resolve(index: &index::Index, vault: &str, env: &str, key: &str) -> Option<(S
         .map(|v| v.chain(env))
         .unwrap_or_else(|| vec![env.to_string()]);
     for link in chain {
-        if let Ok(value) = keychain::get(&index::account(vault, &link, key)) {
-            return Some((link, value));
+        match keychain::get(&index::account(vault, &link, key)) {
+            Ok(value) => return Some((link, value)),
+            Err(e) if e.starts_with("Not found:") => continue,
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
         }
     }
     None
@@ -64,7 +69,11 @@ fn cmd_delete(key: &str, vault: &str, env: &str) {
     let (vault, key) = parse_key(key, vault);
     // Delete only what this environment owns; an inherited value belongs to the
     // environment that defines it and must not vanish from under its siblings.
-    if keychain::delete(&index::account(&vault, env, &key)).is_err() {
+    if let Err(e) = keychain::delete(&index::account(&vault, env, &key)) {
+        if !e.starts_with("Not found:") {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
         let index = index::load();
         match resolve(&index, &vault, env, &key) {
             Some((owner, _)) => eprintln!(
@@ -353,6 +362,7 @@ fn print_usage() {
     eprintln!("  seal get <key>                     Retrieve a secret");
     eprintln!("  seal get ns/key                    Retrieve from vault=ns");
     eprintln!("  seal delete <key>                  Delete a secret");
+    eprintln!("  seal protect <key>                 Enable per-item Touch ID (macOS)");
     eprintln!("  seal list                          List every key in every vault");
     eprintln!("  seal list <ns>                     List one vault (namespace)");
     eprintln!("  seal list <pattern>                Filter keys (substring or *? glob)");
@@ -479,6 +489,18 @@ fn main() {
                 std::process::exit(1);
             }
             cmd_delete(&filtered[2], &default_vault, &environment);
+        }
+        "protect" => {
+            let Some(raw) = filtered.get(2) else {
+                eprintln!("Usage: seal protect <key> [-v vault] [-e env]");
+                std::process::exit(1);
+            };
+            let (vault, key) = parse_key(raw, &default_vault);
+            if let Err(e) = keychain::enable_biometrics(&index::account(&vault, &environment, &key)) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+            println!("Touch ID protection enabled for {}", display_ref(&vault, &key));
         }
         "list" | "ls" => {
             let pattern = filtered.get(2).map(|s| s.as_str());

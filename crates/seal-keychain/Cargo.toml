@@ -1,0 +1,8 @@
+[package]
+name = "seal-keychain"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+security-framework = { version = "3", features = ["OSX_10_15"] }
+core-foundation = "0.10"

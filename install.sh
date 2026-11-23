@@ -4,12 +4,31 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+if [ "$(uname -s)" = "Darwin" ] && [ -n "${SEAL_PROVISIONING_PROFILE:-}" ]; then
+  : "${SEAL_SIGNING_IDENTITY:?Set SEAL_SIGNING_IDENTITY to your Apple code-signing identity}"
+  : "${SEAL_TEAM_ID:?Set SEAL_TEAM_ID to your Apple signing team ID}"
+fi
+
 echo "==> Building Seal..."
 pnpm install >/dev/null 2>&1 || true
 pnpm build >/dev/null 2>&1 || true
 cargo build --manifest-path src-tauri/Cargo.toml --release
 
 BIN_SRC="$(pwd)/src-tauri/target/release/seal"
+
+if [ "$(uname -s)" = "Darwin" ] && [ -n "${SEAL_PROVISIONING_PROFILE:-}" ]; then
+  /usr/bin/python3 scripts/sign-macos.py \
+    --identity "$SEAL_SIGNING_IDENTITY" \
+    --team-id "$SEAL_TEAM_ID" \
+    --profile "$SEAL_PROVISIONING_PROFILE" \
+    "$BIN_SRC"
+  BIN_SRC="$(pwd)/src-tauri/target/release/seal.app/Contents/MacOS/seal"
+  # Verify launch before changing the installed CLI.
+  /usr/bin/python3 -B -c 'import subprocess,sys; subprocess.run([sys.argv[1], "--version"], check=True, timeout=15)' "$BIN_SRC"
+elif [ "$(uname -s)" = "Darwin" ] && [ -n "${SEAL_SIGNING_IDENTITY:-}" ]; then
+  # Standard keychain access does not need restricted sharing entitlements.
+  codesign --force --sign "$SEAL_SIGNING_IDENTITY" "$BIN_SRC"
+fi
 
 if [ -w /usr/local/bin ]; then
   INSTALL_DIR="/usr/local/bin"

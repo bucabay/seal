@@ -1,10 +1,12 @@
-//! Cross-platform keychain backend.
+//! Cross-platform keychain router, preserving individual item authorization.
 //!
-//! On macOS we shell out to the `security` CLI and create items with the `-A`
-//! flag (allow any application to access without warning). The `keyring`
-//! crate's macOS backend creates items with a restrictive ACL, which makes
-//! macOS re-prompt (and sometimes fail with "not allowed") whenever the GUI
-//! and CLI — or dev vs. release builds — are different binaries.
+//! On macOS protected items use the shared native `seal-keychain` library for
+//! user-presence authorization (Touch ID or password). The backend below is
+//! retained for standard keychain access when biometric provisioning is absent.
+//! A protected-item denial never falls back to a legacy password read.
+//!
+//! Legacy versions created items with `security -A`, permitting prompt-free
+//! reads. New standard-keychain saves use an empty trusted-app list instead.
 //!
 //! On Linux and Windows we keep using the `keyring` crate, which maps to
 //! Secret Service and Credential Manager respectively.
@@ -16,29 +18,13 @@ mod backend {
     use std::process::Command;
 
     pub fn set(service: &str, account: &str, value: &str) -> Result<(), String> {
-        // Delete any existing item first so `-A` is freshly applied.
-        let _ = Command::new("security")
-            .args(["delete-generic-password", "-a", account, "-s", service])
-            .output();
-
         let out = Command::new("security")
-            .args([
-                "add-generic-password",
-                "-a",
-                account,
-                "-s",
-                service,
-                "-w",
-                value,
-                "-A",
-            ])
+            .args(["add-generic-password", "-a", account, "-s", service,
+                "-w", value, "-T", "", "-U"])
             .output()
             .map_err(|e| format!("failed to run `security`: {}", e))?;
-
-        if out.status.success() {
-            Ok(())
-        } else {
-            Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+        if out.status.success() { Ok(()) } else {
+            Err("Keychain save failed or authorization was denied".into())
         }
     }
 
@@ -55,8 +41,10 @@ mod backend {
             } else {
                 Ok(value)
             }
-        } else {
+        } else if out.status.code() == Some(44) {
             Err(format!("Not found: {}", account))
+        } else {
+            Err("Keychain access was cancelled or denied".into())
         }
     }
 
@@ -68,8 +56,10 @@ mod backend {
 
         if out.status.success() {
             Ok(())
-        } else {
+        } else if out.status.code() == Some(44) {
             Err(format!("Not found: {}", account))
+        } else {
+            Err("Keychain access was cancelled or denied".into())
         }
     }
 
@@ -203,21 +193,87 @@ mod backend {
 
 /// Store a value under `account` (`"{vault}:{key}"`).
 pub fn set(account: &str, value: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        if seal_keychain::contains(SERVICE, account)? {
+            return seal_keychain::set(SERVICE, account, value);
+        }
+        let legacy = backend::list_accounts(SERVICE).ok_or("Cannot enumerate legacy keychain items")?;
+        if !legacy.iter().any(|name| name == account) && seal_keychain::available()? {
+            return seal_keychain::set(SERVICE, account, value);
+        }
+    }
     backend::set(SERVICE, account, value)
 }
 
 /// Retrieve the value stored under `account`.
 pub fn get(account: &str) -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    {
+        if seal_keychain::contains(SERVICE, account)? {
+            return seal_keychain::get(SERVICE, account);
+        }
+    }
     backend::get(SERVICE, account)
 }
 
 /// Delete the value stored under `account`.
 pub fn delete(account: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    if seal_keychain::contains(SERVICE, account)? {
+        seal_keychain::delete(SERVICE, account)?;
+        if backend::list_accounts(SERVICE)
+            .ok_or("Cannot enumerate legacy keychain items")?.iter().any(|name| name == account) {
+            backend::delete(SERVICE, account)?;
+        }
+        return Ok(());
+    }
     backend::delete(SERVICE, account)
 }
 
 /// Every account (`"{vault}:{key}"`) Seal has stored, or `None` on platforms
 /// whose keychain cannot be enumerated.
 pub fn list_accounts() -> Option<Vec<String>> {
-    backend::list_accounts(SERVICE)
+    let accounts = backend::list_accounts(SERVICE);
+    #[cfg(target_os = "macos")]
+    {
+        let mut accounts = accounts?;
+        accounts.extend(seal_keychain::names(SERVICE).ok()?);
+        accounts.sort();
+        accounts.dedup();
+        Some(accounts)
+    }
+    #[cfg(not(target_os = "macos"))]
+    { accounts }
+}
+
+#[allow(dead_code)] // Used by the GUI, not the CLI.
+pub fn biometric_accounts() -> Result<Option<Vec<String>>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut protected = seal_keychain::names(SERVICE)?;
+        let legacy = backend::list_accounts(SERVICE).ok_or("Cannot enumerate legacy keychain items")?;
+        protected.retain(|name| !legacy.contains(name));
+        Ok(Some(protected))
+    }
+    #[cfg(not(target_os = "macos"))]
+    { Ok(None) }
+}
+
+pub fn enable_biometrics(account: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        seal_keychain::ensure_available()?;
+        if !seal_keychain::contains(SERVICE, account)? {
+            let value = backend::get(SERVICE, account)?;
+            seal_keychain::set(SERVICE, account, &value)?;
+        }
+        if backend::list_accounts(SERVICE).ok_or("Cannot enumerate legacy keychain items")?
+            .iter().any(|name| name == account) {
+            backend::delete(SERVICE, account)?;
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    { let _ = account; Err("Biometric item protection is available on macOS".into()) }
 }

@@ -24,6 +24,8 @@ with reveal, copy and delete on each row](docs/images/seal-gui.png)
   inherit from what they extend, so each one stores only what it overrides
 - **Zero-trust storage** — secrets live only in the OS keychain; nothing
   sensitive is written to disk
+- **Per-item Touch ID (macOS)** — signed builds can protect individual items
+  with Touch ID or password fallback; list/health checks never read passwords
 - **Agent skill** — ships with a Claude Code / opencode skill that encodes the
   safety contract for AI agents (never print secrets, never write them to files)
 
@@ -57,6 +59,7 @@ seal set <key> <value>      # save a secret (vault defaults to "seal")
 seal set ns/key value       # save under vault "ns"
 seal get <key>              # print a secret
 seal delete <key>           # delete a secret
+seal protect <key>          # upgrade a legacy item (provisioned macOS build)
 seal list                   # list every key in every vault
 seal list <ns>              # list one vault: seal list hardroad
 seal list <pattern>         # filter: substring, or glob with * and ?
@@ -116,6 +119,7 @@ never write secrets to files, and consume via `seal get` inline
 - [Plan D](docs/PLAN-D.md) — the three ways to use a secret without seeing it
 - [keymaker/](keymaker/) — the agent-only implementation of Plan D (separate CLI + library)
 - [Architecture](docs/ARCHITECTURE.md) — components, storage model, data flow
+- [Biometric access](docs/BIOMETRICS.md) — per-item Touch ID, upgrades, and signing
 - [Design decisions](docs/DECISIONS.md) — rationale for every major choice
 - [Design system](docs/DESIGN.md) — UI framework, theming, typography
 

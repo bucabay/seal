@@ -64,11 +64,16 @@ Tauri. Exposes nine commands to the frontend via `invoke`:
 
 ### `src-tauri/src/keychain.rs` — platform backend
 
-The single place that touches the OS keychain. Compiled into **both** crates.
+The storage router is compiled into **both** CLI and GUI. On macOS it routes
+protected items to `crates/seal-keychain`, a shared native Security framework
+library also used by Keymaker. That library reads each item with its own
+`USER_PRESENCE` authorization, enabling Touch ID/password fallback. Its metadata
+queries never load password data. See [BIOMETRICS.md](BIOMETRICS.md).
 
-- **macOS**: shells out to the `security` CLI, saving with `-A` (allow any app)
-  so reads never prompt. See
-  [DECISIONS.md](DECISIONS.md#macos-permissive-acl-via-security-cli).
+- **macOS standard/legacy items**: `security` supplies the fallback when biometric
+  provisioning is absent. New saves use `-T "" -U` (no trusted apps, update in
+  place), and reads obey each item's existing OS ACL. Earlier `-A` items may still
+  be prompt-free until their policy is changed. See [BIOMETRICS.md](BIOMETRICS.md).
 - **Linux / Windows**: uses the `keyring` crate (`secret-service` /
   `windows-credentials`).
 
@@ -138,6 +143,12 @@ Each secret is one generic-password entry:
 - **account** = `"{vault}:{key}"`, or `"{vault}/{env}:{key}"` outside the
   default environment (e.g. `hardroad:db_pass`, `hardroad/production:db_pass`)
 - **password** = the secret value
+
+Protected entries use the same service/account format in the Data Protection
+Keychain, with a user-presence ACL and device-only, unlocked accessibility. The
+CLI and GUI share a signed keychain access group. Item listings combine native
+protected-item attributes with legacy keychain names. Upgrading first commits
+the protected entry and only then removes its legacy copy.
 
 This maps to `security add-generic-password -s seal -a hardroad:db_pass -w …`
 on macOS and `keyring::Entry::new("seal", "hardroad:db_pass")` on Linux/Windows.

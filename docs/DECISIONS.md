@@ -2,6 +2,25 @@
 
 Key choices and why, in the order they were made.
 
+## Per-item biometric access (current macOS policy)
+
+Protected items use native Security framework queries in the Data Protection
+Keychain, with `USER_PRESENCE` access control. macOS offers Touch ID and password
+fallback in one item read; there is no separate authentication dialog or shared
+vault unlock. New items from correctly signed builds get this policy by default.
+Biometric rollout is deferred pending a usable macOS provisioning profile and an
+interactive test. Builds without provisioning retain standard OS-keychain access.
+New standard saves use an empty trusted-app list (`-T ""`), not permissive `-A`.
+An existing protected item's cancellation never falls back to another read.
+Biometric builds require a profile inside an app-like bundle, including the CLI.
+See [BIOMETRICS.md](BIOMETRICS.md) for the current blocker and follow-up checklist.
+
+Listing and health checks use attributes, not password reads. Updates use native
+in-place writes rather than delete/add. Concurrent GUI reads of the same item share
+the pending request, and cancellation never falls through to another password
+read. The historical macOS process-per-operation notes below apply to legacy
+items only.
+
 ## Tauri over Electron
 
 **Decision:** build the desktop app on Tauri v2 (Rust + webview) rather than
